@@ -14,10 +14,16 @@ platform :ios do
     # 2. Setup temporary keychain for CI environment
     setup_ci
 
-    # 3. Build the iOS App (.ipa)
+   # 3. Build the iOS App (.ipa) with automatic code signing settings
     build_app(
-      scheme: "ApnaConnect",          # Must match your Xcode scheme name exactly!
-      export_method: "app-store"
+      scheme: "ApnaConnect",
+      export_method: "app-store",
+      export_options: {
+        method: "app-store",
+        provisioningProfiles: {}, # Allows Xcode to generate profiles via API
+        signingStyle: "automatic"
+      },
+      xcargs: "DEVELOPMENT_TEAM=5L2WJF5LMT" # Replace YOUR_TEAM_ID_HERE with your 10-char Team ID
     )
 
     # 4. Upload build to TestFlight / App Store Connect
