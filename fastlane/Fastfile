@@ -1,0 +1,29 @@
+default_platform(:ios)
+
+platform :ios do
+  desc "Build and Upload to App Store Connect / TestFlight"
+  lane :release do
+    # 1. Authenticate with App Store Connect API
+    api_key = app_store_connect_api_key(
+      key_id: ENV["APPSTORE_KEY_ID"],
+      issuer_id: ENV["APPSTORE_ISSUER_ID"],
+      key_content: ENV["APPSTORE_PRIVATE_KEY"],
+      is_key_content_base64: false
+    )
+
+    # 2. Setup temporary keychain for CI environment
+    setup_ci
+
+    # 3. Build the iOS App (.ipa)
+    build_app(
+      scheme: "ApnaConnect",          # Must match your Xcode scheme name exactly!
+      export_method: "app-store"
+    )
+
+    # 4. Upload build to TestFlight / App Store Connect
+    upload_to_testflight(
+      api_key: api_key,
+      skip_waiting_for_build_processing: true
+    )
+  end
+end
