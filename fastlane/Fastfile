@@ -1,9 +1,8 @@
 default_platform(:ios)
 
 platform :ios do
-  desc "Build and Upload to App Store Connect / TestFlight"
+  desc "Build and Upload to App Store Connect"
   lane :release do
-    # 1. Authenticate with App Store Connect API
     api_key = app_store_connect_api_key(
       key_id: ENV["APPSTORE_KEY_ID"],
       issuer_id: ENV["APPSTORE_ISSUER_ID"],
@@ -11,22 +10,22 @@ platform :ios do
       is_key_content_base64: false
     )
 
-    # 2. Setup temporary keychain for CI environment
     setup_ci
 
-   # 3. Build the iOS App (.ipa) with automatic code signing settings
+    # 1. Update project team directly in the xcodeproj file
+    update_project_team(
+      path: "./ApnaConnect.xcodeproj",
+      teamid: "5L2WJF5LMT" # Replace with your client's Team ID
+    )
+
+    # 2. Build app with -allowProvisioningUpdates flag
     build_app(
       scheme: "ApnaConnect",
       export_method: "app-store",
-      export_options: {
-        method: "app-store",
-        provisioningProfiles: {}, # Allows Xcode to generate profiles via API
-        signingStyle: "automatic"
-      },
-      xcargs: "DEVELOPMENT_TEAM=5L2WJF5LMT" # Replace YOUR_TEAM_ID_HERE with your 10-char Team ID
+      xcargs: "-allowProvisioningUpdates"
     )
 
-    # 4. Upload build to TestFlight / App Store Connect
+    # 3. Upload to TestFlight
     upload_to_testflight(
       api_key: api_key,
       skip_waiting_for_build_processing: true
