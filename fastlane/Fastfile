@@ -1,9 +1,74 @@
+# default_platform(:ios)
+
+# platform :ios do
+#   desc "Build and Upload to App Store Connect"
+#   lane :release do
+#     # 1. Authenticate with App Store Connect API Key
+#     api_key = app_store_connect_api_key(
+#       key_id: ENV["APPSTORE_KEY_ID"],
+#       issuer_id: ENV["APPSTORE_ISSUER_ID"],
+#       key_content: ENV["APPSTORE_PRIVATE_KEY"],
+#       is_key_content_base64: false
+#     )
+
+#     # 2. Setup temporary keychain and CI environment
+#     setup_ci
+
+#     # 3. Update Team ID in the project file (Note: parameter is 'teamid' without underscore)
+#     update_project_team(
+#       path: "./ApnaConnect.xcodeproj",
+#       teamid: ENV["TEAM_ID"] 
+#     )
+
+#     # 4. Configure automatic code signing for CI
+#     update_code_signing_settings(
+#       path: "./ApnaConnect.xcodeproj",
+#       use_automatic_signing: false,
+#       team_id: ENV["TEAM_ID"] 
+#     )
+
+#     # 5. Fetch/Generate Distribution Certificate
+#     # get_certificates(
+#     #   api_key: api_key,
+#     #   keychain_path: lane_context[SharedValues::KEYCHAIN_PATH] + "-db",
+#     #   keychain_password: ""
+#     # )
+
+#     # 5. IMPORT your saved Distribution Certificate if you have one, otherwise use get_certificates above to fetch it from App Store Connect
+#     import_certificate(
+#       certificate_path: "certificate.p12",
+#       certificate_password: ""
+#     )
+
+#     # 6. Fetch/Generate Provisioning Profile
+#     get_provisioning_profile(
+#       api_key: api_key,
+#       app_identifier: "com.apnaconnect.ApnaConnect"
+#     )
+
+#     # 7. Build the App for App Store Release
+#     build_app(
+#       scheme: "ApnaConnect",
+#       configuration: "Release",
+#       export_method: "app-store",
+#     )
+
+#     # 8. Upload binary to TestFlight
+#     upload_to_testflight(
+#       api_key: api_key,
+#       skip_waiting_for_build_processing: true
+#     )
+#   end
+# end
+
 default_platform(:ios)
 
 platform :ios do
-  desc "Build and Upload to App Store Connect"
+
+  desc "Release"
+
   lane :release do
-    # 1. Authenticate with App Store Connect API Key
+
     api_key = app_store_connect_api_key(
       key_id: ENV["APPSTORE_KEY_ID"],
       issuer_id: ENV["APPSTORE_ISSUER_ID"],
@@ -11,53 +76,21 @@ platform :ios do
       is_key_content_base64: false
     )
 
-    # 2. Setup temporary keychain and CI environment
-    setup_ci
-
-    # 3. Update Team ID in the project file (Note: parameter is 'teamid' without underscore)
-    update_project_team(
-      path: "./ApnaConnect.xcodeproj",
-      teamid: ENV["TEAM_ID"] 
-    )
-
-    # 4. Configure automatic code signing for CI
-    update_code_signing_settings(
-      path: "./ApnaConnect.xcodeproj",
-      use_automatic_signing: false,
-      team_id: ENV["TEAM_ID"] 
-    )
-
-    # 5. Fetch/Generate Distribution Certificate
-    # get_certificates(
-    #   api_key: api_key,
-    #   keychain_path: lane_context[SharedValues::KEYCHAIN_PATH] + "-db",
-    #   keychain_password: ""
-    # )
-
-    # 5. IMPORT your saved Distribution Certificate if you have one, otherwise use get_certificates above to fetch it from App Store Connect
-    import_certificate(
-      certificate_path: "certificate.p12",
-      certificate_password: ""
-    )
-
-    # 6. Fetch/Generate Provisioning Profile
-    get_provisioning_profile(
-      api_key: api_key,
-      app_identifier: "com.apnaconnect.ApnaConnect"
-    )
-
-    # 7. Build the App for App Store Release
     build_app(
       scheme: "ApnaConnect",
       configuration: "Release",
       export_method: "app-store",
+      export_options: {
+        signingStyle: "manual"
+      },
+      xcargs: "DEVELOPMENT_TEAM=#{ENV['TEAM_ID']}"
     )
 
-    # 8. Upload binary to TestFlight
     upload_to_testflight(
       api_key: api_key,
       skip_waiting_for_build_processing: true
     )
-  end
-end
 
+  end
+
+end
