@@ -76,6 +76,12 @@ platform :ios do
       is_key_content_base64: false
     )
 
+    update_code_signing_settings(
+      path: "./ApnaConnect.xcodeproj",
+      use_automatic_signing: false,
+      team_id: ENV["TEAM_ID"] 
+    )
+
     build_app(
       scheme: "ApnaConnect",
       configuration: "Release",
