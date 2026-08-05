@@ -19,7 +19,7 @@ jobs:
         uses: ruby/setup-ruby@v1
         with:
           ruby-version: '3.2'
-          bundler-cache: false  # Disable bundler caching to avoid potential issues with native extensions
+          bundler-cache: true  # Disable bundler caching to avoid potential issues with native extensions
 
       - name: Set up Xcode
         run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
@@ -29,7 +29,7 @@ jobs:
         
       # this is used when you use already downloaded certificate file in the repo
       - name: Decode Certificate
-        run: echo "$BUILD_CERTIFICATE_BASE64" | base64 --decode > certificate.p12
+        run: echo "$BUILD_CERTIFICATE_BASE64" | base64 --decode > fastlane/certificate.p12
         env:
           BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
 
