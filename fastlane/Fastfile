@@ -72,10 +72,11 @@ platform :ios do
     )
 
     # 5. Fetch/Generate Distribution Certificate and export .p12
+    # 5. Fetch/Generate Distribution Certificate
     get_certificates(
       api_key: api_key,
-      keychain_path: lane_context[SharedValues::KEYCHAIN_PATH],
-      keychain_password: "" # setup_ci uses an empty password by default
+      keychain_path: lane_context[SharedValues::KEYCHAIN_PATH] + "-db",
+      keychain_password: ""
     )
 
     # 6. Fetch/Generate Provisioning Profile
