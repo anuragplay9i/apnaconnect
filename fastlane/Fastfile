@@ -38,8 +38,7 @@ platform :ios do
     import_certificate(
       certificate_path: "certificate.p12",
       certificate_password: "", 
-      keychain_name: lane_context[SharedValues::KEYCHAIN_PATH] + "-db",
-      keychain_password: ""
+
     )
 
     # 6. Fetch/Generate Provisioning Profile
