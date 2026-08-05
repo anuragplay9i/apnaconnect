@@ -1,9 +1,53 @@
+# default_platform(:ios)
+
+# platform :ios do
+#   desc "Build and Upload to App Store Connect"
+#   lane :release do
+#     # 1. Generate API Key object
+#     api_key = app_store_connect_api_key(
+#       key_id: ENV["APPSTORE_KEY_ID"],
+#       issuer_id: ENV["APPSTORE_ISSUER_ID"],
+#       key_content: ENV["APPSTORE_PRIVATE_KEY"],
+#       is_key_content_base64: false
+#     )
+
+#     setup_ci
+
+#     # 2. Update project team and automatic signing
+#     update_code_signing_settings(
+#       path: "./ApnaConnect.xcodeproj",
+#       use_automatic_signing: true,
+#       team_id: "5L2WJF5LMT" # Client's 10-char Team ID
+#     )
+
+#     # 3. Build passing api_key directly so xcodebuild authenticates!
+#     build_app(
+#       scheme: "ApnaConnect",
+#       configuration: "Release",
+#       export_method: "app-store",
+#       api_key: api_key, # <--- THIS IS THE CRITICAL AUTHENTICATION BRIDGE
+#       export_options: {
+#         method: "app-store",
+#         signingStyle: "automatic",
+#         teamID: "5L2WJF5LMT"
+#       }
+#     )
+
+#     # 4. Upload to TestFlight
+#     upload_to_testflight(
+#       api_key: api_key,
+#       skip_waiting_for_build_processing: true
+#     )
+#   end
+# end
+
+
 default_platform(:ios)
 
 platform :ios do
   desc "Build and Upload to App Store Connect"
   lane :release do
-    # 1. Generate API Key object
+    # 1. Authenticate with App Store Connect API Key
     api_key = app_store_connect_api_key(
       key_id: ENV["APPSTORE_KEY_ID"],
       issuer_id: ENV["APPSTORE_ISSUER_ID"],
@@ -11,29 +55,43 @@ platform :ios do
       is_key_content_base64: false
     )
 
+    # 2. Setup temporary keychain and CI environment
     setup_ci
 
-    # 2. Update project team and automatic signing
+    # 3. Update Team ID in the project file (Note: parameter is 'teamid' without underscore)
+    update_project_team(
+      path: "./ApnaConnect.xcodeproj",
+      teamid: ENV["TEAM_ID"] 
+    )
+
+    # 4. Configure automatic code signing for CI
     update_code_signing_settings(
       path: "./ApnaConnect.xcodeproj",
       use_automatic_signing: true,
-      team_id: "5L2WJF5LMT" # Client's 10-char Team ID
+      team_id: ENV["TEAM_ID"] 
     )
 
-    # 3. Build passing api_key directly so xcodebuild authenticates!
+    # 5. Fetch/Generate Distribution Certificate and export .p12
+    get_certificates(
+      api_key: api_key,
+      p12_password: ENV["MY_PROFILE_PWD"] # Replace with your password
+    )
+
+    # 6. Fetch/Generate Provisioning Profile
+    get_provisioning_profile(
+      api_key: api_key,
+      app_identifier: "com.apnaconnect.ApnaConnect"
+    )
+
+    # 7. Build the App for App Store Release
     build_app(
       scheme: "ApnaConnect",
       configuration: "Release",
       export_method: "app-store",
-      api_key: api_key, # <--- THIS IS THE CRITICAL AUTHENTICATION BRIDGE
-      export_options: {
-        method: "app-store",
-        signingStyle: "automatic",
-        teamID: "5L2WJF5LMT"
-      }
+      xcargs: "DEVELOPMENT_TEAM=#{ENV['TEAM_ID'] || 'YOUR_10_CHAR_TEAM_ID'} -allowProvisioningUpdates"
     )
 
-    # 4. Upload to TestFlight
+    # 8. Upload binary to TestFlight
     upload_to_testflight(
       api_key: api_key,
       skip_waiting_for_build_processing: true
