@@ -1,47 +1,3 @@
-# default_platform(:ios)
-
-# platform :ios do
-#   desc "Build and Upload to App Store Connect"
-#   lane :release do
-#     # 1. Generate API Key object
-#     api_key = app_store_connect_api_key(
-#       key_id: ENV["APPSTORE_KEY_ID"],
-#       issuer_id: ENV["APPSTORE_ISSUER_ID"],
-#       key_content: ENV["APPSTORE_PRIVATE_KEY"],
-#       is_key_content_base64: false
-#     )
-
-#     setup_ci
-
-#     # 2. Update project team and automatic signing
-#     update_code_signing_settings(
-#       path: "./ApnaConnect.xcodeproj",
-#       use_automatic_signing: true,
-#       team_id: "5L2WJF5LMT" # Client's 10-char Team ID
-#     )
-
-#     # 3. Build passing api_key directly so xcodebuild authenticates!
-#     build_app(
-#       scheme: "ApnaConnect",
-#       configuration: "Release",
-#       export_method: "app-store",
-#       api_key: api_key, # <--- THIS IS THE CRITICAL AUTHENTICATION BRIDGE
-#       export_options: {
-#         method: "app-store",
-#         signingStyle: "automatic",
-#         teamID: "5L2WJF5LMT"
-#       }
-#     )
-
-#     # 4. Upload to TestFlight
-#     upload_to_testflight(
-#       api_key: api_key,
-#       skip_waiting_for_build_processing: true
-#     )
-#   end
-# end
-
-
 default_platform(:ios)
 
 platform :ios do
@@ -67,15 +23,22 @@ platform :ios do
     # 4. Configure automatic code signing for CI
     update_code_signing_settings(
       path: "./ApnaConnect.xcodeproj",
-      use_automatic_signing: true,
+      use_automatic_signing: false,
       team_id: ENV["TEAM_ID"] 
     )
 
-    # 5. Fetch/Generate Distribution Certificate and export .p12
     # 5. Fetch/Generate Distribution Certificate
-    get_certificates(
-      api_key: api_key,
-      keychain_path: lane_context[SharedValues::KEYCHAIN_PATH] + "-db",
+    # get_certificates(
+    #   api_key: api_key,
+    #   keychain_path: lane_context[SharedValues::KEYCHAIN_PATH] + "-db",
+    #   keychain_password: ""
+    # )
+
+    # 5. IMPORT your saved Distribution Certificate if you have one, otherwise use get_certificates above to fetch it from App Store Connect
+    import_certificate(
+      certificate_path: "certificate.p12",
+      certificate_password: "", 
+      keychain_name: lane_context[SharedValues::KEYCHAIN_PATH] + "-db",
       keychain_password: ""
     )
 
@@ -90,7 +53,6 @@ platform :ios do
       scheme: "ApnaConnect",
       configuration: "Release",
       export_method: "app-store",
-      xcargs: "DEVELOPMENT_TEAM=#{ENV['TEAM_ID'] || 'YOUR_10_CHAR_TEAM_ID'} -allowProvisioningUpdates"
     )
 
     # 8. Upload binary to TestFlight

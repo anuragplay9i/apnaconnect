@@ -26,6 +26,12 @@ jobs:
 
       - name: Install Dependencies
         run: bundle install
+        
+      # this is used when you use already downloaded certificate file in the repo
+      - name: Decode Certificate
+        run: echo "$BUILD_CERTIFICATE_BASE64" | base64 --decode > certificate.p12
+        env:
+          BUILD_CERTIFICATE_BASE64: ${{ secrets.BUILD_CERTIFICATE_BASE64 }}
 
       - name: Run Fastlane Release
         env:
