@@ -73,8 +73,7 @@ platform :ios do
 
     # 5. Fetch/Generate Distribution Certificate and export .p12
     get_certificates(
-      api_key: api_key,
-      p12_password: ENV["MY_PROFILE_PWD"] # Replace with your password
+      api_key: api_key
     )
 
     # 6. Fetch/Generate Provisioning Profile
