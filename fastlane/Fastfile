@@ -82,6 +82,12 @@ platform :ios do
       team_id: ENV["TEAM_ID"] 
     )
 
+    # 6. Fetch/Generate Provisioning Profile
+    get_provisioning_profile(
+      api_key: api_key,
+      app_identifier: "com.apnaconnect.ApnaConnect"
+    )
+
     build_app(
       scheme: "ApnaConnect",
       configuration: "Release",
