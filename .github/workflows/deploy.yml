@@ -41,11 +41,11 @@ jobs:
           TEAM_ID: ${{ secrets.TEAM_ID }} # Optional: Pass Team ID from secrets
         run: bundle exec fastlane release
 
-      - name: Upload Signing Certificates & Profiles as Artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: ios-signing-files
-          path: |
-            *.mobileprovision
-            *.p12
+      # - name: Upload Signing Certificates & Profiles as Artifacts, used only if you want to download them for later use
+      #   if: always()
+      #   uses: actions/upload-artifact@v4
+      #   with:
+      #     name: ios-signing-files
+      #     path: |
+      #       *.mobileprovision
+      #       *.p12
