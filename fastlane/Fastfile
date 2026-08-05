@@ -87,7 +87,10 @@ platform :ios do
       configuration: "Release",
       export_method: "app-store",
       export_options: {
-        signingStyle: "manual"
+        signingStyle: "manual",
+        provisioningProfiles: {
+          "com.apnaconnect.ApnaConnect" => "com.apnaconnect.ApnaConnect AppStore"
+        }
       },
       xcargs: "DEVELOPMENT_TEAM=#{ENV['TEAM_ID']}"
     )
