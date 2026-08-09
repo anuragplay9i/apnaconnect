@@ -183,6 +183,45 @@ jobs:
           xcodebuild -version
 
 
+      - name: Inspect Installed Provisioning Profiles
+        run: |
+          echo "=== Installed profiles ==="
+
+          for profile in \
+            "$HOME/Library/MobileDevice/Provisioning Profiles/"*.mobileprovision
+          do
+            echo ""
+            echo "FILE: $profile"
+
+            security cms -D -i "$profile" > /tmp/profile.plist
+
+            echo "Name:"
+            /usr/libexec/PlistBuddy \
+              -c "Print :Name" \
+              /tmp/profile.plist
+
+            echo "UUID:"
+            /usr/libexec/PlistBuddy \
+              -c "Print :UUID" \
+              /tmp/profile.plist
+
+            echo "Team:"
+            /usr/libexec/PlistBuddy \
+              -c "Print :TeamIdentifier:0" \
+              /tmp/profile.plist
+
+            echo "Application Identifier:"
+            /usr/libexec/PlistBuddy \
+              -c "Print :Entitlements:application-identifier" \
+              /tmp/profile.plist
+
+            echo "Expiration:"
+            /usr/libexec/PlistBuddy \
+              -c "Print :ExpirationDate" \
+              /tmp/profile.plist
+          done
+
+
       # --------------------------------------------------
       # Build and Upload
       # --------------------------------------------------
