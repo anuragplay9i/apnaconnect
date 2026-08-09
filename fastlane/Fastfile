@@ -64,8 +64,7 @@
 default_platform(:ios)
 
 platform :ios do
-
-  desc "Release"
+  desc "Build and Upload to App Store Connect"
 
   lane :release do
 
@@ -76,18 +75,6 @@ platform :ios do
       is_key_content_base64: false
     )
 
-    update_code_signing_settings(
-      path: "./ApnaConnect.xcodeproj",
-      use_automatic_signing: false,
-      team_id: ENV["TEAM_ID"] 
-    )
-
-    # 6. Fetch/Generate Provisioning Profile
-    get_provisioning_profile(
-      api_key: api_key,
-      app_identifier: "com.apnaconnect.ApnaConnect"
-    )
-
     build_app(
       scheme: "ApnaConnect",
       configuration: "Release",
@@ -95,7 +82,7 @@ platform :ios do
       export_options: {
         signingStyle: "manual",
         provisioningProfiles: {
-          "com.apnaconnect.ApnaConnect" => "com.apnaconnect.ApnaConnect AppStore"
+          "com.apnaconnect.ApnaConnect" => ENV["PROVISIONING_PROFILE_NAME"]
         }
       },
       xcargs: "DEVELOPMENT_TEAM=#{ENV['TEAM_ID']}"
@@ -107,5 +94,4 @@ platform :ios do
     )
 
   end
-
 end
