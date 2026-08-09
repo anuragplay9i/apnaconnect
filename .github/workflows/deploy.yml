@@ -41,6 +41,20 @@ jobs:
           ls -lh certificate.p12
 
 
+      - name: Verify decoded P12
+        env:
+          P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
+        run: |
+          echo "Testing decoded P12..."
+
+          openssl pkcs12 \
+            -in certificate.p12 \
+            -passin "pass:$P12_PASSWORD" \
+            -noout
+
+          echo "P12 verification successful."
+
+
       # --------------------------------------------------
       # Decode Provisioning Profile
       # --------------------------------------------------
