@@ -64,7 +64,6 @@
 default_platform(:ios)
 
 platform :ios do
-  desc "Build and Upload to App Store Connect"
 
   lane :release do
 
@@ -73,6 +72,14 @@ platform :ios do
       issuer_id: ENV["APPSTORE_ISSUER_ID"],
       key_content: ENV["APPSTORE_PRIVATE_KEY"],
       is_key_content_base64: false
+    )
+
+    update_code_signing_settings(
+      path: "./ApnaConnect.xcodeproj",
+      use_automatic_signing: false,
+      team_id: ENV["TEAM_ID"],
+      code_sign_identity: "Apple Distribution",
+      profile_name: ENV["PROVISIONING_PROFILE_NAME"]
     )
 
     build_app(
@@ -94,4 +101,5 @@ platform :ios do
     )
 
   end
+
 end
