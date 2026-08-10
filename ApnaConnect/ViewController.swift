@@ -309,13 +309,6 @@ final class ViewController: UIViewController,
 
 
         // ---------------------------------------------------------
-        // JavaScript
-        // ---------------------------------------------------------
-
-        configuration.preferences.javaScriptEnabled = true
-
-
-        // ---------------------------------------------------------
         // Inline media
         // ---------------------------------------------------------
 
@@ -326,18 +319,6 @@ final class ViewController: UIViewController,
 
             configuration.mediaTypesRequiringUserActionForPlayback = []
         }
-
-
-        // ---------------------------------------------------------
-        // File URL access
-        //
-        // Kept to match the Android WebView configuration.
-        // ---------------------------------------------------------
-
-        configuration.setValue(
-            true,
-            forKey: "allowUniversalAccessFromFileURLs"
-        )
 
 
         // ---------------------------------------------------------
@@ -1102,34 +1083,42 @@ final class ViewController: UIViewController,
         print("📱 Native URL:")
         print(appURL.absoluteString)
 
-
-        if UIApplication.shared.canOpenURL(
-            appURL
-        ) {
-
-            UIApplication.shared.open(
-                appURL,
-                options: [:]
-            ) { success in
-
-                print(
-                    success
-                    ? "✅ Native app opened"
-                    : "❌ Native app failed to open"
-                )
-            }
-
-        } else {
+        guard UIApplication.shared.canOpenURL(appURL) else {
 
             print("⚠️ Native app not installed")
             print("🌐 Opening browser:")
             print(fallbackURL.absoluteString)
 
-
             UIApplication.shared.open(
                 fallbackURL,
                 options: [:]
             )
+
+            return
+        }
+
+        UIApplication.shared.open(
+            appURL,
+            options: [:]
+        ) { success in
+
+            guard success else {
+
+                print("❌ Native app failed to open")
+                print("🌐 Falling back to browser:")
+                print(fallbackURL.absoluteString)
+
+                DispatchQueue.main.async {
+                    UIApplication.shared.open(
+                        fallbackURL,
+                        options: [:]
+                    )
+                }
+
+                return
+            }
+
+            print("✅ Native app opened")
         }
     }
 
@@ -1517,41 +1506,27 @@ final class ViewController: UIViewController,
         _ url: URL
     ) {
 
-        if let xURL =
-            URL(
-                string:
-                    "x://"
-            ),
-           UIApplication.shared.canOpenURL(
-                xURL
-           ) {
+        if let xURL = URL(string: "x://"),
+           UIApplication.shared.canOpenURL(xURL) {
 
-            UIApplication.shared.open(
-                xURL,
-                options: [:]
+            openApp(
+                appURL: xURL,
+                fallbackURL: url
             )
 
             return
         }
 
+        if let twitterURL = URL(string: "twitter://"),
+           UIApplication.shared.canOpenURL(twitterURL) {
 
-        if let twitterURL =
-            URL(
-                string:
-                    "twitter://"
-            ),
-           UIApplication.shared.canOpenURL(
-                twitterURL
-           ) {
-
-            UIApplication.shared.open(
-                twitterURL,
-                options: [:]
+            openApp(
+                appURL: twitterURL,
+                fallbackURL: url
             )
 
             return
         }
-
 
         openExternalURL(url)
     }
@@ -2326,7 +2301,7 @@ extension ViewController {
     }
 
 
-    @available(iOS 14.0, *)
+    @available(iOS 18.4, *)
     func webView(
         _ webView: WKWebView,
         runOpenPanelWith parameters: WKOpenPanelParameters,
