@@ -9,6 +9,17 @@ final class ViewController: UIViewController,
                             WKScriptMessageHandler,
                             AVSpeechSynthesizerDelegate {
 
+    // MARK: - Shared Process Pool
+    //
+    // Physical iOS devices are known to sometimes fail to sync a
+    // freshly-set session cookie into WKHTTPCookieStore in time for
+    // the very next request (WebKit bug 177478 and related reports).
+    // Never recreating the process pool is one of the standard
+    // mitigations, so it's a static, app-lifetime constant rather
+    // than a fresh WKProcessPool() built inside setupWebView().
+    private static let sharedProcessPool = WKProcessPool()
+
+
     // MARK: - WebView
 
     private var webView: WKWebView!
@@ -36,6 +47,24 @@ final class ViewController: UIViewController,
     // MARK: - File Upload
 
     private var fileUploadCompletion: (([URL]?) -> Void)?
+
+
+    // MARK: - Cookie Sync Workaround (physical device login bug)
+    //
+    // On real hardware, a session cookie set by a POST response (e.g.
+    // a login form submit) is sometimes not committed into
+    // WKHTTPCookieStore in time for the page that follows, so the
+    // server sees an anonymous session and the "after login" redirect
+    // silently doesn't happen. It only ever shows up after the app is
+    // relaunched, because by then the cookie has finally been written
+    // to the persistent store. This does not happen in Safari, the
+    // Simulator, or Android WebView, because none of them share this
+    // specific WKWebView-embedded timing bug.
+    //
+    // We track POST navigations and, once, give the cookie store a
+    // moment to catch up and retry.
+    private var isPostSubmissionInFlight = false
+    private var hasRetriedPostSync = false
 
 
     // MARK: - Website
@@ -272,7 +301,7 @@ final class ViewController: UIViewController,
         // Persistent Process Pool & Website Storage
         // Ensures PHP PHPSESSID cookies persist across HTTP redirects
         // ---------------------------------------------------------
-        configuration.processPool = WKProcessPool()
+        configuration.processPool = ViewController.sharedProcessPool
 
 
         // ---------------------------------------------------------
@@ -675,6 +704,14 @@ final class ViewController: UIViewController,
         if let scheme = url.scheme?.lowercased(),
            scheme == "http" || scheme == "https" {
 
+            if navigationAction.request.httpMethod == "POST" {
+
+                print("📝 POST navigation detected (likely a form submit, e.g. login)")
+
+                isPostSubmissionInFlight = true
+                hasRetriedPostSync = false
+            }
+
             decisionHandler(.allow)
             return
         }
@@ -843,6 +880,45 @@ final class ViewController: UIViewController,
         debugAuthenticationState()
 
 
+        // ---------------------------------------------------------
+        // Cookie sync retry (physical device login bug)
+        //
+        // If the navigation that just finished was a POST (login
+        // submit), the session cookie may not have been committed to
+        // WKHTTPCookieStore in time for the response we just
+        // rendered. Give it a moment, nudge the store by reading it,
+        // then reload ONCE so a by-then-synced cookie gets a chance
+        // to be honored. hasRetriedPostSync guarantees this can only
+        // fire a single time per submit, so it can't loop forever if
+        // the login actually failed for a real reason (bad password,
+        // etc).
+        // ---------------------------------------------------------
+
+        if isPostSubmissionInFlight && !hasRetriedPostSync {
+
+            isPostSubmissionInFlight = false
+            hasRetriedPostSync = true
+
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+
+                guard let self = self else { return }
+
+                self.webView.configuration
+                    .websiteDataStore
+                    .httpCookieStore
+                    .getAllCookies { _ in
+
+                        DispatchQueue.main.async {
+
+                            print("🔄 Reloading once after POST to pick up newly-synced session cookie")
+
+                            self.webView.reload()
+                        }
+                    }
+            }
+        }
+
+
         // Share bridge.
 
         DispatchQueue.main.asyncAfter(
@@ -923,6 +999,23 @@ final class ViewController: UIViewController,
     }
 
 
+    // MARK: - WebContent Process Terminated
+    //
+    // Another real-device-only WKWebView failure mode: the WebContent
+    // process can be killed by the OS (memory pressure, etc.) without
+    // any error being reported to the delegate, leaving the page
+    // frozen. Reloading recovers it instead of the app looking stuck.
+
+    func webViewWebContentProcessDidTerminate(
+        _ webView: WKWebView
+    ) {
+
+        print("⚠️ WebContent process terminated - reloading")
+
+        webView.reload()
+    }
+
+
     // MARK: - Response
 
     func webView(
@@ -940,6 +1033,15 @@ final class ViewController: UIViewController,
 
             // ---------------------------------------------------------
             // PHP Cookie Sync Fix for Physical iOS Devices
+            //
+            // NOTE: since iOS 12, WebKit no longer exposes Set-Cookie
+            // in the headers handed to app code for privacy reasons,
+            // so `cookies` below is almost always empty on a modern
+            // OS and this block rarely does anything. It's left in
+            // place (harmless) with a print so you can confirm that
+            // in the Xcode console - this is NOT what is causing the
+            // login redirect bug; see the POST-retry logic in
+            // didFinish instead.
             // ---------------------------------------------------------
             if let responseURL = httpResponse.url,
             let headerFields = httpResponse.allHeaderFields as? [String: String] {
@@ -948,7 +1050,9 @@ final class ViewController: UIViewController,
                     withResponseHeaderFields: headerFields,
                     for: responseURL
                 )
-                
+
+                print("🍪 Set-Cookie headers visible to app:", cookies.count)
+
                 for cookie in cookies {
                     webView.configuration.websiteDataStore.httpCookieStore.setCookie(cookie)
                 }
