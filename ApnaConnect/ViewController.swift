@@ -51,31 +51,20 @@ final class ViewController: UIViewController,
 
     // MARK: - Cookie Sync Workaround (physical device login bug)
     //
-    // On real hardware, a session cookie set by a JS fetch()/AJAX
-    // response (this site logs in via fetch, then does
-    // window.location.href on success) is sometimes not committed
-    // into WKHTTPCookieStore in time for the navigation that follows
-    // it, so the server sees an anonymous session and the redirect
-    // silently fails. It only shows up as "already logged in" after
-    // the app is relaunched, because by then the cookie has finally
-    // been written to the persistent store. This does not happen in
-    // Safari, the Simulator, or Android WebView.
+    // On real hardware, a session cookie set by a POST response (e.g.
+    // a login form submit) is sometimes not committed into
+    // WKHTTPCookieStore in time for the page that follows, so the
+    // server sees an anonymous session and the "after login" redirect
+    // silently doesn't happen. It only ever shows up after the app is
+    // relaunched, because by then the cookie has finally been written
+    // to the persistent store. This does not happen in Safari, the
+    // Simulator, or Android WebView, because none of them share this
+    // specific WKWebView-embedded timing bug.
     //
-    // Fix: force a cookie-store sync immediately before every
-    // navigation is allowed to proceed (see decidePolicyFor
-    // navigationAction below). Reading the store forces WebKit to
-    // flush any pending cookie write first, so the navigation's
-    // actual request goes out with the up-to-date cookie attached.
-
-
-    // MARK: - On-Screen Debug Panel
-    //
-    // You don't have a Mac, so there's no Xcode console or Safari Web
-    // Inspector available on a TestFlight build. This puts the same
-    // diagnostics on-screen instead, so you can see exactly what's
-    // happening on the physical device when you tap login.
-    private var debugOverlay: UITextView!
-    private var debugLines: [String] = []
+    // We track POST navigations and, once, give the cookie store a
+    // moment to catch up and retry.
+    private var isPostSubmissionInFlight = false
+    private var hasRetriedPostSync = false
 
 
     // MARK: - Website
@@ -94,7 +83,6 @@ final class ViewController: UIViewController,
         setupSplashUI()
         setupWebView()
         setupBackNavigation()
-        setupDebugOverlay()
 
         DispatchQueue.main.asyncAfter(deadline: .now() + splashMinTime) {
             [weak self] in
@@ -120,10 +108,6 @@ final class ViewController: UIViewController,
 
         webView?.configuration.userContentController.removeScriptMessageHandler(
             forName: "speakText"
-        )
-
-        webView?.configuration.userContentController.removeScriptMessageHandler(
-            forName: "debugLog"
         )
 
         webView?.navigationDelegate = nil
@@ -309,6 +293,7 @@ final class ViewController: UIViewController,
 
     // MARK: - WebView Setup
 
+
     private func setupWebView() {
 
         let configuration = WKWebViewConfiguration()
@@ -317,128 +302,82 @@ final class ViewController: UIViewController,
         // Persistent Process Pool & Website Storage
         // Ensures PHP PHPSESSID cookies persist across HTTP redirects
         // ---------------------------------------------------------
+
         configuration.processPool = ViewController.sharedProcessPool
 
-
-        // ---------------------------------------------------------
-        // Persistent website storage
-        //
-        // This is important for login/session cookies and storage.
-        // ---------------------------------------------------------
-
+        // Persistent website storage for login/session cookies
         configuration.websiteDataStore = WKWebsiteDataStore.default()
 
-
-        // ---------------------------------------------------------
-        // JavaScript bridge
-        // ---------------------------------------------------------
-
-        let userContentController =
-            WKUserContentController()
-
-
-        userContentController.add(
-            self,
-            name: "shareText"
-        )
-
-        userContentController.add(
-            self,
-            name: "getAuthToken"
-        )
-
-        userContentController.add(
-            self,
-            name: "speakText"
-        )
-
-        userContentController.add(
-            self,
-            name: "debugLog"
-        )
+        // Enable automatic JS window opens for post-XHR redirects
+        let preferences = WKPreferences()
+        preferences.javaScriptCanOpenWindowsAutomatically = true
+        configuration.preferences = preferences
 
 
         // ---------------------------------------------------------
-        // fetch()/XHR diagnostics
-        //
-        // Login on this site happens via fetch(), which never shows
-        // up in WKNavigationDelegate - only a REAL navigation does.
-        // This script wraps fetch and XMLHttpRequest so every call
-        // and its response get reported back to the on-screen debug
-        // panel. Injected at document start so it's active before
-        // any of the page's own scripts run.
+        // JavaScript bridge & XHR Cookie Interceptor
         // ---------------------------------------------------------
 
-        let fetchWrapperJS = """
+        let userContentController = WKUserContentController()
+
+        // XHR/Fetch Interceptor JS: Flushes document cookies across IPC bridge on AJAX complete
+        let xhrCookieFixJS = """
         (function() {
+            var origOpen = XMLHttpRequest.prototype.open;
+            var origSend = XMLHttpRequest.prototype.send;
 
-            if (window.__nativeDebugWrapped) { return; }
-            window.__nativeDebugWrapped = true;
-
-            function report(msg) {
-                try {
-                    window.webkit.messageHandlers.debugLog.postMessage(String(msg));
-                } catch (e) {}
-            }
-
-            var originalFetch = window.fetch;
-
-            if (originalFetch) {
-                window.fetch = function() {
-                    var url = arguments[0];
-                    var opts = arguments[1] || {};
-                    report('fetch → ' + (opts.method || 'GET') + ' ' + url);
-
-                    return originalFetch.apply(this, arguments).then(function(response) {
-                        report('fetch ← ' + response.status + ' ' + url);
-                        return response;
-                    }).catch(function(err) {
-                        report('fetch ERROR ' + url + ' : ' + err);
-                        throw err;
-                    });
-                };
-            }
-
-            var originalOpen = XMLHttpRequest.prototype.open;
-            var originalSend = XMLHttpRequest.prototype.send;
-
-            XMLHttpRequest.prototype.open = function(method, url) {
-                this.__debugMethod = method;
-                this.__debugUrl = url;
-                return originalOpen.apply(this, arguments);
+            XMLHttpRequest.prototype.open = function() {
+                this._url = arguments[1];
+                return origOpen.apply(this, arguments);
             };
 
             XMLHttpRequest.prototype.send = function() {
-                var xhr = this;
-                report('xhr → ' + xhr.__debugMethod + ' ' + xhr.__debugUrl);
-
-                xhr.addEventListener('loadend', function() {
-                    report('xhr ← ' + xhr.status + ' ' + xhr.__debugUrl);
-                });
-
-                xhr.addEventListener('error', function() {
-                    report('xhr ERROR ' + xhr.__debugUrl);
-                });
-
-                return originalSend.apply(this, arguments);
+                var self = this;
+                this.addEventListener('readystatechange', function() {
+                    if (self.readyState === 4) {
+                        try {
+                            window.webkit.messageHandlers.xhrCookieSync.postMessage({
+                                url: self._url,
+                                cookies: document.cookie
+                            });
+                        } catch(e) {}
+                    }
+                }, false);
+                return origSend.apply(this, arguments);
             };
 
-            report('fetch/XHR wrapper installed');
-
+            if (window.fetch) {
+                var origFetch = window.fetch;
+                window.fetch = function() {
+                    return origFetch.apply(this, arguments).then(function(response) {
+                        try {
+                            window.webkit.messageHandlers.xhrCookieSync.postMessage({
+                                url: response.url,
+                                cookies: document.cookie
+                            });
+                        } catch(e) {}
+                        return response;
+                    });
+                };
+            }
         })();
         """
 
-        let fetchWrapperScript = WKUserScript(
-            source: fetchWrapperJS,
+        let userScript = WKUserScript(
+            source: xhrCookieFixJS,
             injectionTime: .atDocumentStart,
-            forMainFrameOnly: true
+            forMainFrameOnly: false
         )
 
-        userContentController.addUserScript(fetchWrapperScript)
+        userContentController.addUserScript(userScript)
 
+        // Handlers
+        userContentController.add(self, name: "xhrCookieSync")
+        userContentController.add(self, name: "shareText")
+        userContentController.add(self, name: "getAuthToken")
+        userContentController.add(self, name: "speakText")
 
-        configuration.userContentController =
-            userContentController
+        configuration.userContentController = userContentController
 
 
         // ---------------------------------------------------------
@@ -447,9 +386,7 @@ final class ViewController: UIViewController,
 
         configuration.allowsInlineMediaPlayback = true
 
-
         if #available(iOS 10.0, *) {
-
             configuration.mediaTypesRequiringUserActionForPlayback = []
         }
 
@@ -458,11 +395,10 @@ final class ViewController: UIViewController,
         // Create WebView
         // ---------------------------------------------------------
 
-        webView =
-            WKWebView(
-                frame: .zero,
-                configuration: configuration
-            )
+        webView = WKWebView(
+            frame: .zero,
+            configuration: configuration
+        )
 
         webView.translatesAutoresizingMaskIntoConstraints = false
 
@@ -482,19 +418,15 @@ final class ViewController: UIViewController,
 
 
         NSLayoutConstraint.activate([
-
             webView.leadingAnchor.constraint(
                 equalTo: view.leadingAnchor
             ),
-
             webView.trailingAnchor.constraint(
                 equalTo: view.trailingAnchor
             ),
-
             webView.topAnchor.constraint(
                 equalTo: view.topAnchor
             ),
-
             webView.bottomAnchor.constraint(
                 equalTo: view.bottomAnchor
             )
@@ -570,82 +502,6 @@ final class ViewController: UIViewController,
         if webView.canGoBack {
 
             webView.goBack()
-        }
-    }
-
-
-    // MARK: - On-Screen Debug Panel
-
-    private func setupDebugOverlay() {
-
-        let container = UIView()
-        container.translatesAutoresizingMaskIntoConstraints = false
-        container.backgroundColor = UIColor.black.withAlphaComponent(0.85)
-        container.layer.cornerRadius = 8
-        view.addSubview(container)
-
-        let closeButton = UIButton(type: .system)
-        closeButton.translatesAutoresizingMaskIntoConstraints = false
-        closeButton.setTitle("✕ Hide debug log", for: .normal)
-        closeButton.setTitleColor(.white, for: .normal)
-        closeButton.titleLabel?.font = UIFont.boldSystemFont(ofSize: 12)
-        closeButton.addTarget(self, action: #selector(hideDebugOverlay), for: .touchUpInside)
-        container.addSubview(closeButton)
-
-        debugOverlay = UITextView()
-        debugOverlay.translatesAutoresizingMaskIntoConstraints = false
-        debugOverlay.isEditable = false
-        debugOverlay.backgroundColor = .clear
-        debugOverlay.textColor = .green
-        debugOverlay.font = UIFont.monospacedSystemFont(ofSize: 10, weight: .regular)
-        container.addSubview(debugOverlay)
-
-        NSLayoutConstraint.activate([
-            container.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 8),
-            container.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -8),
-            container.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -8),
-            container.heightAnchor.constraint(equalToConstant: 220),
-
-            closeButton.topAnchor.constraint(equalTo: container.topAnchor, constant: 4),
-            closeButton.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -8),
-
-            debugOverlay.topAnchor.constraint(equalTo: closeButton.bottomAnchor, constant: 2),
-            debugOverlay.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 8),
-            debugOverlay.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -8),
-            debugOverlay.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -6)
-        ])
-
-        logDebug("Debug panel ready. Tap login and watch this box.")
-    }
-
-
-    @objc private func hideDebugOverlay() {
-        debugOverlay.superview?.removeFromSuperview()
-    }
-
-
-    private func logDebug(_ message: String) {
-
-        DispatchQueue.main.async { [weak self] in
-
-            guard let self = self else { return }
-
-            let formatter = DateFormatter()
-            formatter.dateFormat = "HH:mm:ss"
-            let line = "[\(formatter.string(from: Date()))] \(message)"
-
-            print(line)
-
-            self.debugLines.append(line)
-
-            if self.debugLines.count > 60 {
-                self.debugLines.removeFirst(self.debugLines.count - 60)
-            }
-
-            self.debugOverlay?.text = self.debugLines.joined(separator: "\n")
-
-            let bottom = NSRange(location: (self.debugOverlay.text as NSString).length, length: 0)
-            self.debugOverlay?.scrollRangeToVisible(bottom)
         }
     }
 
@@ -880,28 +736,15 @@ final class ViewController: UIViewController,
         if let scheme = url.scheme?.lowercased(),
            scheme == "http" || scheme == "https" {
 
-            let method = navigationAction.request.httpMethod ?? "GET"
+            if navigationAction.request.httpMethod == "POST" {
 
-            logDebug("NAV \(method) → \(url.path)")
+                print("📝 POST navigation detected (likely a form submit, e.g. login)")
 
-            // Force the cookie store to sync/flush before this
-            // navigation's actual network request goes out. This is
-            // the fix for the fetch()-login-then-redirect bug: it
-            // guarantees the session cookie set by the login fetch()
-            // call is actually attached to this next request instead
-            // of racing it.
-            webView.configuration
-                .websiteDataStore
-                .httpCookieStore
-                .getAllCookies { [weak self] cookies in
+                isPostSubmissionInFlight = true
+                hasRetriedPostSync = false
+            }
 
-                    let names = cookies.map { $0.name }.joined(separator: ", ")
-
-                    self?.logDebug("Cookies before nav: \(names.isEmpty ? "NONE" : names)")
-
-                    decisionHandler(.allow)
-                }
-
+            decisionHandler(.allow)
             return
         }
 
@@ -1064,12 +907,48 @@ final class ViewController: UIViewController,
         maybeHideSplash()
 
 
-        logDebug("FINISHED → \(webView.url?.path ?? "?")")
-
-
         // Login/session diagnostics.
 
         debugAuthenticationState()
+
+
+        // ---------------------------------------------------------
+        // Cookie sync retry (physical device login bug)
+        //
+        // If the navigation that just finished was a POST (login
+        // submit), the session cookie may not have been committed to
+        // WKHTTPCookieStore in time for the response we just
+        // rendered. Give it a moment, nudge the store by reading it,
+        // then reload ONCE so a by-then-synced cookie gets a chance
+        // to be honored. hasRetriedPostSync guarantees this can only
+        // fire a single time per submit, so it can't loop forever if
+        // the login actually failed for a real reason (bad password,
+        // etc).
+        // ---------------------------------------------------------
+
+        if isPostSubmissionInFlight && !hasRetriedPostSync {
+
+            isPostSubmissionInFlight = false
+            hasRetriedPostSync = true
+
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+
+                guard let self = self else { return }
+
+                self.webView.configuration
+                    .websiteDataStore
+                    .httpCookieStore
+                    .getAllCookies { _ in
+
+                        DispatchQueue.main.async {
+
+                            print("🔄 Reloading once after POST to pick up newly-synced session cookie")
+
+                            self.webView.reload()
+                        }
+                    }
+            }
+        }
 
 
         // Share bridge.
@@ -1107,9 +986,6 @@ final class ViewController: UIViewController,
                 }
 
                 print("")
-
-                let names = cookies.map { $0.name }.joined(separator: ", ")
-                self.logDebug("Cookies: \(names.isEmpty ? "NONE" : names)")
             }
     }
 
@@ -2320,15 +2196,6 @@ extension ViewController {
                 activityVC,
                 animated: true
             )
-
-
-        // ---------------------------------------------------------
-        // fetch()/XHR diagnostics -> on-screen debug panel
-        // ---------------------------------------------------------
-
-        case "debugLog":
-
-            logDebug("JS: \(body)")
 
 
         // ---------------------------------------------------------
