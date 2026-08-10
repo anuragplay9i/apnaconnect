@@ -51,20 +51,31 @@ final class ViewController: UIViewController,
 
     // MARK: - Cookie Sync Workaround (physical device login bug)
     //
-    // On real hardware, a session cookie set by a POST response (e.g.
-    // a login form submit) is sometimes not committed into
-    // WKHTTPCookieStore in time for the page that follows, so the
-    // server sees an anonymous session and the "after login" redirect
-    // silently doesn't happen. It only ever shows up after the app is
-    // relaunched, because by then the cookie has finally been written
-    // to the persistent store. This does not happen in Safari, the
-    // Simulator, or Android WebView, because none of them share this
-    // specific WKWebView-embedded timing bug.
+    // On real hardware, a session cookie set by a JS fetch()/AJAX
+    // response (this site logs in via fetch, then does
+    // window.location.href on success) is sometimes not committed
+    // into WKHTTPCookieStore in time for the navigation that follows
+    // it, so the server sees an anonymous session and the redirect
+    // silently fails. It only shows up as "already logged in" after
+    // the app is relaunched, because by then the cookie has finally
+    // been written to the persistent store. This does not happen in
+    // Safari, the Simulator, or Android WebView.
     //
-    // We track POST navigations and, once, give the cookie store a
-    // moment to catch up and retry.
-    private var isPostSubmissionInFlight = false
-    private var hasRetriedPostSync = false
+    // Fix: force a cookie-store sync immediately before every
+    // navigation is allowed to proceed (see decidePolicyFor
+    // navigationAction below). Reading the store forces WebKit to
+    // flush any pending cookie write first, so the navigation's
+    // actual request goes out with the up-to-date cookie attached.
+
+
+    // MARK: - On-Screen Debug Panel
+    //
+    // You don't have a Mac, so there's no Xcode console or Safari Web
+    // Inspector available on a TestFlight build. This puts the same
+    // diagnostics on-screen instead, so you can see exactly what's
+    // happening on the physical device when you tap login.
+    private var debugOverlay: UITextView!
+    private var debugLines: [String] = []
 
 
     // MARK: - Website
@@ -83,6 +94,7 @@ final class ViewController: UIViewController,
         setupSplashUI()
         setupWebView()
         setupBackNavigation()
+        setupDebugOverlay()
 
         DispatchQueue.main.asyncAfter(deadline: .now() + splashMinTime) {
             [weak self] in
@@ -474,6 +486,82 @@ final class ViewController: UIViewController,
     }
 
 
+    // MARK: - On-Screen Debug Panel
+
+    private func setupDebugOverlay() {
+
+        let container = UIView()
+        container.translatesAutoresizingMaskIntoConstraints = false
+        container.backgroundColor = UIColor.black.withAlphaComponent(0.85)
+        container.layer.cornerRadius = 8
+        view.addSubview(container)
+
+        let closeButton = UIButton(type: .system)
+        closeButton.translatesAutoresizingMaskIntoConstraints = false
+        closeButton.setTitle("✕ Hide debug log", for: .normal)
+        closeButton.setTitleColor(.white, for: .normal)
+        closeButton.titleLabel?.font = UIFont.boldSystemFont(ofSize: 12)
+        closeButton.addTarget(self, action: #selector(hideDebugOverlay), for: .touchUpInside)
+        container.addSubview(closeButton)
+
+        debugOverlay = UITextView()
+        debugOverlay.translatesAutoresizingMaskIntoConstraints = false
+        debugOverlay.isEditable = false
+        debugOverlay.backgroundColor = .clear
+        debugOverlay.textColor = .green
+        debugOverlay.font = UIFont.monospacedSystemFont(ofSize: 10, weight: .regular)
+        container.addSubview(debugOverlay)
+
+        NSLayoutConstraint.activate([
+            container.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 8),
+            container.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -8),
+            container.bottomAnchor.constraint(equalTo: view.safeAreaLayoutGuide.bottomAnchor, constant: -8),
+            container.heightAnchor.constraint(equalToConstant: 220),
+
+            closeButton.topAnchor.constraint(equalTo: container.topAnchor, constant: 4),
+            closeButton.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -8),
+
+            debugOverlay.topAnchor.constraint(equalTo: closeButton.bottomAnchor, constant: 2),
+            debugOverlay.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 8),
+            debugOverlay.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -8),
+            debugOverlay.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -6)
+        ])
+
+        logDebug("Debug panel ready. Tap login and watch this box.")
+    }
+
+
+    @objc private func hideDebugOverlay() {
+        debugOverlay.superview?.removeFromSuperview()
+    }
+
+
+    private func logDebug(_ message: String) {
+
+        DispatchQueue.main.async { [weak self] in
+
+            guard let self = self else { return }
+
+            let formatter = DateFormatter()
+            formatter.dateFormat = "HH:mm:ss"
+            let line = "[\(formatter.string(from: Date()))] \(message)"
+
+            print(line)
+
+            self.debugLines.append(line)
+
+            if self.debugLines.count > 60 {
+                self.debugLines.removeFirst(self.debugLines.count - 60)
+            }
+
+            self.debugOverlay?.text = self.debugLines.joined(separator: "\n")
+
+            let bottom = NSRange(location: (self.debugOverlay.text as NSString).length, length: 0)
+            self.debugOverlay?.scrollRangeToVisible(bottom)
+        }
+    }
+
+
     // MARK: - Navigation Action
 
     func webView(
@@ -704,15 +792,28 @@ final class ViewController: UIViewController,
         if let scheme = url.scheme?.lowercased(),
            scheme == "http" || scheme == "https" {
 
-            if navigationAction.request.httpMethod == "POST" {
+            let method = navigationAction.request.httpMethod ?? "GET"
 
-                print("📝 POST navigation detected (likely a form submit, e.g. login)")
+            logDebug("NAV \(method) → \(url.path)")
 
-                isPostSubmissionInFlight = true
-                hasRetriedPostSync = false
-            }
+            // Force the cookie store to sync/flush before this
+            // navigation's actual network request goes out. This is
+            // the fix for the fetch()-login-then-redirect bug: it
+            // guarantees the session cookie set by the login fetch()
+            // call is actually attached to this next request instead
+            // of racing it.
+            webView.configuration
+                .websiteDataStore
+                .httpCookieStore
+                .getAllCookies { [weak self] cookies in
 
-            decisionHandler(.allow)
+                    let names = cookies.map { $0.name }.joined(separator: ", ")
+
+                    self?.logDebug("Cookies before nav: \(names.isEmpty ? "NONE" : names)")
+
+                    decisionHandler(.allow)
+                }
+
             return
         }
 
@@ -875,48 +976,12 @@ final class ViewController: UIViewController,
         maybeHideSplash()
 
 
+        logDebug("FINISHED → \(webView.url?.path ?? "?")")
+
+
         // Login/session diagnostics.
 
         debugAuthenticationState()
-
-
-        // ---------------------------------------------------------
-        // Cookie sync retry (physical device login bug)
-        //
-        // If the navigation that just finished was a POST (login
-        // submit), the session cookie may not have been committed to
-        // WKHTTPCookieStore in time for the response we just
-        // rendered. Give it a moment, nudge the store by reading it,
-        // then reload ONCE so a by-then-synced cookie gets a chance
-        // to be honored. hasRetriedPostSync guarantees this can only
-        // fire a single time per submit, so it can't loop forever if
-        // the login actually failed for a real reason (bad password,
-        // etc).
-        // ---------------------------------------------------------
-
-        if isPostSubmissionInFlight && !hasRetriedPostSync {
-
-            isPostSubmissionInFlight = false
-            hasRetriedPostSync = true
-
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
-
-                guard let self = self else { return }
-
-                self.webView.configuration
-                    .websiteDataStore
-                    .httpCookieStore
-                    .getAllCookies { _ in
-
-                        DispatchQueue.main.async {
-
-                            print("🔄 Reloading once after POST to pick up newly-synced session cookie")
-
-                            self.webView.reload()
-                        }
-                    }
-            }
-        }
 
 
         // Share bridge.
@@ -954,6 +1019,9 @@ final class ViewController: UIViewController,
                 }
 
                 print("")
+
+                let names = cookies.map { $0.name }.joined(separator: ", ")
+                self.logDebug("Cookies: \(names.isEmpty ? "NONE" : names)")
             }
     }
 
