@@ -449,15 +449,16 @@ final class ViewController: UIViewController,
         decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
     ) {
 
-        guard let url =
-            navigationAction.request.url
-        else {
-
+        guard let url = navigationAction.request.url else {
             decisionHandler(.allow)
-
             return
         }
 
+        let isMainFrame =
+            navigationAction.targetFrame?.isMainFrame ?? true
+
+        let isUserNavigation =
+            navigationAction.navigationType == .linkActivated
 
         print("")
         print("➡️ NAVIGATION REQUEST")
@@ -465,279 +466,228 @@ final class ViewController: UIViewController,
         print("Scheme: \(url.scheme ?? "nil")")
         print("Host: \(url.host ?? "nil")")
         print("Navigation type: \(navigationAction.navigationType.rawValue)")
+        print("Main frame: \(isMainFrame)")
+        print("User navigation: \(isUserNavigation)")
         print("")
 
 
         // ---------------------------------------------------------
-        // tel:
+        // Never intercept sub-frame navigation.
+        //
+        // This is important for embedded Instagram/Facebook/etc.
+        // content. An embedded post can load its own URLs without
+        // taking the user out of Apna Connect.
+        // ---------------------------------------------------------
+
+        if !isMainFrame {
+            decisionHandler(.allow)
+            return
+        }
+
+
+        // ---------------------------------------------------------
+        // Telephone
         // ---------------------------------------------------------
 
         if url.scheme?.lowercased() == "tel" {
 
-            openExternalURL(
-                url
-            )
+            openExternalURL(url)
 
             decisionHandler(.cancel)
-
             return
         }
 
 
         // ---------------------------------------------------------
-        // mailto:
+        // Email
         // ---------------------------------------------------------
 
         if url.scheme?.lowercased() == "mailto" {
 
-            openExternalURL(
-                url
-            )
+            openExternalURL(url)
 
             decisionHandler(.cancel)
-
             return
         }
 
 
         // ---------------------------------------------------------
-        // sms:
+        // SMS
         // ---------------------------------------------------------
 
         if url.scheme?.lowercased() == "sms" {
 
-            openExternalURL(
-                url
-            )
+            openExternalURL(url)
 
             decisionHandler(.cancel)
-
             return
         }
 
 
         // ---------------------------------------------------------
-        // Google Maps
-        // ---------------------------------------------------------
-
-        if isGoogleMapsURL(
-            url
-        ) {
-
-            print("🗺️ Google Maps detected")
-
-            openGoogleMaps(
-                url
-            )
-
-            decisionHandler(.cancel)
-
-            return
-        }
-
-
-        // ---------------------------------------------------------
-        // WhatsApp
-        // ---------------------------------------------------------
-
-        if isWhatsAppURL(
-            url
-        ) {
-
-            print("💬 WhatsApp detected")
-
-            openWhatsApp(
-                url
-            )
-
-            decisionHandler(.cancel)
-
-            return
-        }
-
-
-        // ---------------------------------------------------------
-        // Instagram
-        // ---------------------------------------------------------
-
-        if isInstagramURL(
-            url
-        ) {
-
-            print("📸 Instagram detected")
-
-            openInstagram(
-                url
-            )
-
-            decisionHandler(.cancel)
-
-            return
-        }
-
-
-        // ---------------------------------------------------------
-        // Facebook
-        // ---------------------------------------------------------
-
-        if isFacebookURL(
-            url
-        ) {
-
-            print("📘 Facebook detected")
-
-            openFacebook(
-                url
-            )
-
-            decisionHandler(.cancel)
-
-            return
-        }
-
-
-        // ---------------------------------------------------------
-        // X / Twitter
-        // ---------------------------------------------------------
-
-        if isTwitterURL(
-            url
-        ) {
-
-            print("𝕏 X/Twitter detected")
-
-            openTwitter(
-                url
-            )
-
-            decisionHandler(.cancel)
-
-            return
-        }
-
-
-        // ---------------------------------------------------------
-        // LinkedIn
-        // ---------------------------------------------------------
-
-        if isLinkedInURL(
-            url
-        ) {
-
-            print("💼 LinkedIn detected")
-
-            openLinkedIn(
-                url
-            )
-
-            decisionHandler(.cancel)
-
-            return
-        }
-
-
-        // ---------------------------------------------------------
-        // Spotify
-        // ---------------------------------------------------------
-
-        if isSpotifyURL(
-            url
-        ) {
-
-            print("🎵 Spotify detected")
-
-            openSpotify(
-                url
-            )
-
-            decisionHandler(.cancel)
-
-            return
-        }
-
-
-        // ---------------------------------------------------------
-        // Telegram
-        // ---------------------------------------------------------
-
-        if isTelegramURL(
-            url
-        ) {
-
-            print("✈️ Telegram detected")
-
-            openTelegram(
-                url
-            )
-
-            decisionHandler(.cancel)
-
-            return
-        }
-
-
-        // ---------------------------------------------------------
-        // Pinterest
-        // ---------------------------------------------------------
-
-        if isPinterestURL(
-            url
-        ) {
-
-            print("📌 Pinterest detected")
-
-            openPinterest(
-                url
-            )
-
-            decisionHandler(.cancel)
-
-            return
-        }
-
-
-        // ---------------------------------------------------------
-        // NORMAL HTTP / HTTPS
-        //
         // IMPORTANT:
         //
-        // Login redirects, dashboard navigation, posts, API pages,
-        // authentication callbacks, etc. stay INSIDE WKWebView.
+        // Only route HTTPS links for external apps when the user
+        // actually clicked/activated the link.
         //
-        // This is the behavior we want from the working Android app.
+        // Automatic redirects, iframe/embed navigation, page loads,
+        // JavaScript navigation, login redirects, etc. remain inside
+        // WKWebView.
         // ---------------------------------------------------------
 
-        if let scheme =
-            url.scheme?.lowercased(),
-           scheme == "http" ||
-           scheme == "https" {
+        if isUserNavigation {
+
+            // Google Maps
+
+            if isGoogleMapsURL(url) {
+
+                print("🗺️ User clicked Google Maps")
+
+                openGoogleMaps(url)
+
+                decisionHandler(.cancel)
+                return
+            }
+
+
+            // WhatsApp
+
+            if isWhatsAppURL(url) {
+
+                print("💬 User clicked WhatsApp")
+
+                openWhatsApp(url)
+
+                decisionHandler(.cancel)
+                return
+            }
+
+
+            // Instagram
+
+            if isInstagramURL(url) {
+
+                print("📸 User clicked Instagram")
+
+                openInstagram(url)
+
+                decisionHandler(.cancel)
+                return
+            }
+
+
+            // Facebook
+
+            if isFacebookURL(url) {
+
+                print("📘 User clicked Facebook")
+
+                openFacebook(url)
+
+                decisionHandler(.cancel)
+                return
+            }
+
+
+            // X / Twitter
+
+            if isTwitterURL(url) {
+
+                print("𝕏 User clicked X/Twitter")
+
+                openTwitter(url)
+
+                decisionHandler(.cancel)
+                return
+            }
+
+
+            // LinkedIn
+
+            if isLinkedInURL(url) {
+
+                print("💼 User clicked LinkedIn")
+
+                openLinkedIn(url)
+
+                decisionHandler(.cancel)
+                return
+            }
+
+
+            // Spotify
+
+            if isSpotifyURL(url) {
+
+                print("🎵 User clicked Spotify")
+
+                openSpotify(url)
+
+                decisionHandler(.cancel)
+                return
+            }
+
+
+            // Telegram
+
+            if isTelegramURL(url) {
+
+                print("✈️ User clicked Telegram")
+
+                openTelegram(url)
+
+                decisionHandler(.cancel)
+                return
+            }
+
+
+            // Pinterest
+
+            if isPinterestURL(url) {
+
+                print("📌 User clicked Pinterest")
+
+                openPinterest(url)
+
+                decisionHandler(.cancel)
+                return
+            }
+        }
+
+
+        // ---------------------------------------------------------
+        // Normal HTTP / HTTPS
+        //
+        // This includes:
+        //
+        // - Apna Connect navigation
+        // - login redirects
+        // - dashboard redirects
+        // - authentication callbacks
+        // - embedded web content
+        // - automatic redirects
+        // ---------------------------------------------------------
+
+        if let scheme = url.scheme?.lowercased(),
+           scheme == "http" || scheme == "https" {
 
             decisionHandler(.allow)
-
             return
         }
 
 
         // ---------------------------------------------------------
-        // Unknown custom URL scheme
+        // Other custom URL schemes
         // ---------------------------------------------------------
 
-        if let scheme =
-            url.scheme?.lowercased(),
-           !scheme.isEmpty {
+        if let scheme = url.scheme?.lowercased(),
+           !scheme.isEmpty,
+           UIApplication.shared.canOpenURL(url) {
 
-            if UIApplication.shared.canOpenURL(
-                url
-            ) {
+            openExternalURL(url)
 
-                openExternalURL(
-                    url
-                )
-
-                decisionHandler(.cancel)
-
-                return
-            }
+            decisionHandler(.cancel)
+            return
         }
 
 
@@ -761,92 +711,88 @@ final class ViewController: UIViewController,
         }
 
 
+        let isUserNavigation =
+            navigationAction.navigationType == .linkActivated
+
         print("🔗 NEW WINDOW:")
         print(url.absoluteString)
+        print("User navigation:", isUserNavigation)
 
 
-        // Handle external application links.
+        // Only route external application links when the user
+        // actually activated the link.
 
-        if isGoogleMapsURL(url) {
+        if isUserNavigation {
 
-            openGoogleMaps(url)
+            if isGoogleMapsURL(url) {
 
-            return nil
+                openGoogleMaps(url)
+                return nil
+            }
+
+
+            if isWhatsAppURL(url) {
+
+                openWhatsApp(url)
+                return nil
+            }
+
+
+            if isInstagramURL(url) {
+
+                openInstagram(url)
+                return nil
+            }
+
+
+            if isFacebookURL(url) {
+
+                openFacebook(url)
+                return nil
+            }
+
+
+            if isTwitterURL(url) {
+
+                openTwitter(url)
+                return nil
+            }
+
+
+            if isLinkedInURL(url) {
+
+                openLinkedIn(url)
+                return nil
+            }
+
+
+            if isSpotifyURL(url) {
+
+                openSpotify(url)
+                return nil
+            }
+
+
+            if isTelegramURL(url) {
+
+                openTelegram(url)
+                return nil
+            }
+
+
+            if isPinterestURL(url) {
+
+                openPinterest(url)
+                return nil
+            }
         }
 
 
-        if isWhatsAppURL(url) {
-
-            openWhatsApp(url)
-
-            return nil
-        }
-
-
-        if isInstagramURL(url) {
-
-            openInstagram(url)
-
-            return nil
-        }
-
-
-        if isFacebookURL(url) {
-
-            openFacebook(url)
-
-            return nil
-        }
-
-
-        if isTwitterURL(url) {
-
-            openTwitter(url)
-
-            return nil
-        }
-
-
-        if isLinkedInURL(url) {
-
-            openLinkedIn(url)
-
-            return nil
-        }
-
-
-        if isSpotifyURL(url) {
-
-            openSpotify(url)
-
-            return nil
-        }
-
-
-        if isTelegramURL(url) {
-
-            openTelegram(url)
-
-            return nil
-        }
-
-
-        if isPinterestURL(url) {
-
-            openPinterest(url)
-
-            return nil
-        }
-
-
-        // Everything else opens in the existing WebView.
+        // Normal web content stays inside the current WebView.
 
         webView.load(
-            URLRequest(
-                url: url
-            )
+            URLRequest(url: url)
         )
-
 
         return nil
     }
