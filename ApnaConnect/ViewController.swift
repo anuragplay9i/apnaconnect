@@ -122,6 +122,10 @@ final class ViewController: UIViewController,
             forName: "speakText"
         )
 
+        webView?.configuration.userContentController.removeScriptMessageHandler(
+            forName: "debugLog"
+        )
+
         webView?.navigationDelegate = nil
         webView?.uiDelegate = nil
 
@@ -347,6 +351,90 @@ final class ViewController: UIViewController,
             self,
             name: "speakText"
         )
+
+        userContentController.add(
+            self,
+            name: "debugLog"
+        )
+
+
+        // ---------------------------------------------------------
+        // fetch()/XHR diagnostics
+        //
+        // Login on this site happens via fetch(), which never shows
+        // up in WKNavigationDelegate - only a REAL navigation does.
+        // This script wraps fetch and XMLHttpRequest so every call
+        // and its response get reported back to the on-screen debug
+        // panel. Injected at document start so it's active before
+        // any of the page's own scripts run.
+        // ---------------------------------------------------------
+
+        let fetchWrapperJS = """
+        (function() {
+
+            if (window.__nativeDebugWrapped) { return; }
+            window.__nativeDebugWrapped = true;
+
+            function report(msg) {
+                try {
+                    window.webkit.messageHandlers.debugLog.postMessage(String(msg));
+                } catch (e) {}
+            }
+
+            var originalFetch = window.fetch;
+
+            if (originalFetch) {
+                window.fetch = function() {
+                    var url = arguments[0];
+                    var opts = arguments[1] || {};
+                    report('fetch → ' + (opts.method || 'GET') + ' ' + url);
+
+                    return originalFetch.apply(this, arguments).then(function(response) {
+                        report('fetch ← ' + response.status + ' ' + url);
+                        return response;
+                    }).catch(function(err) {
+                        report('fetch ERROR ' + url + ' : ' + err);
+                        throw err;
+                    });
+                };
+            }
+
+            var originalOpen = XMLHttpRequest.prototype.open;
+            var originalSend = XMLHttpRequest.prototype.send;
+
+            XMLHttpRequest.prototype.open = function(method, url) {
+                this.__debugMethod = method;
+                this.__debugUrl = url;
+                return originalOpen.apply(this, arguments);
+            };
+
+            XMLHttpRequest.prototype.send = function() {
+                var xhr = this;
+                report('xhr → ' + xhr.__debugMethod + ' ' + xhr.__debugUrl);
+
+                xhr.addEventListener('loadend', function() {
+                    report('xhr ← ' + xhr.status + ' ' + xhr.__debugUrl);
+                });
+
+                xhr.addEventListener('error', function() {
+                    report('xhr ERROR ' + xhr.__debugUrl);
+                });
+
+                return originalSend.apply(this, arguments);
+            };
+
+            report('fetch/XHR wrapper installed');
+
+        })();
+        """
+
+        let fetchWrapperScript = WKUserScript(
+            source: fetchWrapperJS,
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: true
+        )
+
+        userContentController.addUserScript(fetchWrapperScript)
 
 
         configuration.userContentController =
@@ -2232,6 +2320,15 @@ extension ViewController {
                 activityVC,
                 animated: true
             )
+
+
+        // ---------------------------------------------------------
+        // fetch()/XHR diagnostics -> on-screen debug panel
+        // ---------------------------------------------------------
+
+        case "debugLog":
+
+            logDebug("JS: \(body)")
 
 
         // ---------------------------------------------------------
