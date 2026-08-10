@@ -13,6 +13,30 @@
     <key>ITSAppUsesNonExemptEncryption</key>
     <false/>
 
+    <key>LSApplicationQueriesSchemes</key>
+    <array>
+        <string>comgooglemaps</string>
+        <string>comgooglemapsurl</string>
+
+        <string>whatsapp</string>
+
+        <string>instagram</string>
+
+        <string>fb</string>
+
+        <string>x</string>
+        <string>twitter</string>
+
+        <string>linkedin</string>
+
+        <string>spotify</string>
+
+        <string>tg</string>
+        <string>telegram</string>
+
+        <string>pinterest</string>
+    </array>
+
     <key>UIApplicationSceneManifest</key>
     <dict>
         <key>UIApplicationSupportsMultipleScenes</key>

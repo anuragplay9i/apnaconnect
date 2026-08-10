@@ -1,20 +1,24 @@
 import UIKit
 import WebKit
 import AVFoundation
+import PhotosUI
 
 final class ViewController: UIViewController,
                             WKNavigationDelegate,
                             WKUIDelegate,
+                            WKScriptMessageHandler,
                             AVSpeechSynthesizerDelegate {
 
     // MARK: - WebView
 
     private var webView: WKWebView!
 
+
     // MARK: - Speech
 
     private var speechSynthesizer: AVSpeechSynthesizer?
     private var currentMessageId: String?
+
 
     // MARK: - Splash
 
@@ -26,10 +30,16 @@ final class ViewController: UIViewController,
     private var pageLoaded = false
     private var splashMinTimePassed = false
 
-    // Minimum time that the splash remains visible.
-    private let splashMinTime: TimeInterval = 1.5
+    private let splashMinTime: TimeInterval = 2.0
 
-    // Website
+
+    // MARK: - File Upload
+
+    private var fileUploadCompletion: (([URL]?) -> Void)?
+
+
+    // MARK: - Website
+
     private let websiteURL = "https://apnaconnect.com.au"
 
 
@@ -40,18 +50,17 @@ final class ViewController: UIViewController,
 
         view.backgroundColor = .white
 
-        // 1. Speech engine
         setupSpeech()
-
-        // 2. Splash
         setupSplashUI()
-
-        // 3. WebView
         setupWebView()
+        setupBackNavigation()
 
-        // 4. Minimum splash duration
-        DispatchQueue.main.asyncAfter(deadline: .now() + splashMinTime) { [weak self] in
-            guard let self = self else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + splashMinTime) {
+            [weak self] in
+
+            guard let self = self else {
+                return
+            }
 
             self.splashMinTimePassed = true
             self.maybeHideSplash()
@@ -59,9 +68,32 @@ final class ViewController: UIViewController,
     }
 
 
-    // MARK: - Speech Setup
+    deinit {
+        webView?.configuration.userContentController.removeScriptMessageHandler(
+            forName: "shareText"
+        )
+
+        webView?.configuration.userContentController.removeScriptMessageHandler(
+            forName: "getAuthToken"
+        )
+
+        webView?.configuration.userContentController.removeScriptMessageHandler(
+            forName: "speakText"
+        )
+
+        webView?.navigationDelegate = nil
+        webView?.uiDelegate = nil
+
+        speechSynthesizer?.stopSpeaking(
+            at: .immediate
+        )
+    }
+
+
+    // MARK: - Speech
 
     private func setupSpeech() {
+
         speechSynthesizer = AVSpeechSynthesizer()
         speechSynthesizer?.delegate = self
     }
@@ -71,77 +103,112 @@ final class ViewController: UIViewController,
 
     private func setupSplashUI() {
 
-        view.backgroundColor = .white
-
-        // Full-screen splash container
         splashContainer = UIView()
         splashContainer.translatesAutoresizingMaskIntoConstraints = false
-        splashContainer.backgroundColor = .white
+        splashContainer.backgroundColor = .black
 
         view.addSubview(splashContainer)
 
         NSLayoutConstraint.activate([
-            splashContainer.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            splashContainer.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            splashContainer.topAnchor.constraint(equalTo: view.topAnchor),
-            splashContainer.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+            splashContainer.leadingAnchor.constraint(
+                equalTo: view.leadingAnchor
+            ),
+
+            splashContainer.trailingAnchor.constraint(
+                equalTo: view.trailingAnchor
+            ),
+
+            splashContainer.topAnchor.constraint(
+                equalTo: view.topAnchor
+            ),
+
+            splashContainer.bottomAnchor.constraint(
+                equalTo: view.bottomAnchor
+            )
         ])
 
 
-        // ---------------------------------------------------------
-        // Full splash artwork
+        // Full splash artwork.
         //
-        // Add an image named "splashScreen" to Assets.xcassets.
+        // Assets.xcassets
+        //     splashScreen.imageset
         //
-        // This should be your complete splash artwork rather than
-        // just the logo.
-        // ---------------------------------------------------------
+        // splashScreen.png
 
         splashImageView = UIImageView()
         splashImageView.translatesAutoresizingMaskIntoConstraints = false
-        splashImageView.image = UIImage(named: "splashScreen")
+
+        splashImageView.image =
+            UIImage(named: "splashScreen")
+
         splashImageView.contentMode = .scaleAspectFill
         splashImageView.clipsToBounds = true
 
-        splashContainer.addSubview(splashImageView)
+        splashContainer.addSubview(
+            splashImageView
+        )
 
         NSLayoutConstraint.activate([
-            splashImageView.leadingAnchor.constraint(equalTo: splashContainer.leadingAnchor),
-            splashImageView.trailingAnchor.constraint(equalTo: splashContainer.trailingAnchor),
-            splashImageView.topAnchor.constraint(equalTo: splashContainer.topAnchor),
-            splashImageView.bottomAnchor.constraint(equalTo: splashContainer.bottomAnchor)
+            splashImageView.leadingAnchor.constraint(
+                equalTo: splashContainer.leadingAnchor
+            ),
+
+            splashImageView.trailingAnchor.constraint(
+                equalTo: splashContainer.trailingAnchor
+            ),
+
+            splashImageView.topAnchor.constraint(
+                equalTo: splashContainer.topAnchor
+            ),
+
+            splashImageView.bottomAnchor.constraint(
+                equalTo: splashContainer.bottomAnchor
+            )
         ])
 
 
-        // ---------------------------------------------------------
-        // Loading label
-        // ---------------------------------------------------------
-
-        loadingLabel = UILabel()
-        loadingLabel.translatesAutoresizingMaskIntoConstraints = false
-        loadingLabel.text = "Loading..."
-        loadingLabel.textColor = .darkGray
-        loadingLabel.font = UIFont.systemFont(ofSize: 15, weight: .medium)
-        loadingLabel.textAlignment = .center
-
-        splashContainer.addSubview(loadingLabel)
-
-
-        // ---------------------------------------------------------
-        // Activity indicator
-        // ---------------------------------------------------------
+        // Native loading indicator
 
         if #available(iOS 13.0, *) {
-            activityIndicator = UIActivityIndicatorView(style: .medium)
+            activityIndicator =
+                UIActivityIndicatorView(
+                    style: .medium
+                )
         } else {
-            activityIndicator = UIActivityIndicatorView(style: .gray)
+            activityIndicator =
+                UIActivityIndicatorView(
+                    style: .white
+                )
         }
 
         activityIndicator.translatesAutoresizingMaskIntoConstraints = false
+        activityIndicator.color = .white
         activityIndicator.hidesWhenStopped = false
         activityIndicator.startAnimating()
 
-        splashContainer.addSubview(activityIndicator)
+        splashContainer.addSubview(
+            activityIndicator
+        )
+
+
+        // Loading text
+
+        loadingLabel = UILabel()
+        loadingLabel.translatesAutoresizingMaskIntoConstraints = false
+
+        loadingLabel.text = "Loading..."
+        loadingLabel.textColor = .white
+        loadingLabel.font =
+            UIFont.systemFont(
+                ofSize: 15,
+                weight: .medium
+            )
+
+        loadingLabel.textAlignment = .center
+
+        splashContainer.addSubview(
+            loadingLabel
+        )
 
 
         NSLayoutConstraint.activate([
@@ -167,27 +234,28 @@ final class ViewController: UIViewController,
     }
 
 
-    // MARK: - Hide Splash
-
     private func maybeHideSplash() {
 
-        guard pageLoaded && splashMinTimePassed else {
+        guard pageLoaded,
+              splashMinTimePassed
+        else {
             return
         }
 
+
         UIView.animate(
-            withDuration: 0.45,
+            withDuration: 0.5,
             delay: 0,
             options: [.curveEaseOut],
-            animations: { [weak self] in
-                self?.splashContainer.alpha = 0
+            animations: {
+                self.splashContainer.alpha = 0
             },
-            completion: { [weak self] _ in
-
-                guard let self = self else { return }
+            completion: { _ in
 
                 self.activityIndicator.stopAnimating()
+
                 self.splashContainer.isHidden = true
+
                 self.splashContainer.removeFromSuperview()
             }
         )
@@ -198,49 +266,89 @@ final class ViewController: UIViewController,
 
     private func setupWebView() {
 
-        let webConfiguration = WKWebViewConfiguration()
-
-        let userContentController = WKUserContentController()
-
-
-        // JavaScript bridge handlers
-
-        userContentController.add(self, name: "shareText")
-        userContentController.add(self, name: "getAuthToken")
-        userContentController.add(self, name: "speakText")
-
-        webConfiguration.userContentController = userContentController
+        let configuration =
+            WKWebViewConfiguration()
 
 
+        // ---------------------------------------------------------
+        // Persistent website storage
+        //
+        // This is important for login/session cookies and storage.
+        // ---------------------------------------------------------
+
+        configuration.websiteDataStore =
+            WKWebsiteDataStore.default()
+
+
+        // ---------------------------------------------------------
+        // JavaScript bridge
+        // ---------------------------------------------------------
+
+        let userContentController =
+            WKUserContentController()
+
+
+        userContentController.add(
+            self,
+            name: "shareText"
+        )
+
+        userContentController.add(
+            self,
+            name: "getAuthToken"
+        )
+
+        userContentController.add(
+            self,
+            name: "speakText"
+        )
+
+
+        configuration.userContentController =
+            userContentController
+
+
+        // ---------------------------------------------------------
         // JavaScript
+        // ---------------------------------------------------------
 
-        webConfiguration.preferences.javaScriptEnabled = true
+        configuration.preferences.javaScriptEnabled = true
 
 
-        // Allow inline media
+        // ---------------------------------------------------------
+        // Inline media
+        // ---------------------------------------------------------
 
-        webConfiguration.allowsInlineMediaPlayback = true
+        configuration.allowsInlineMediaPlayback = true
+
 
         if #available(iOS 10.0, *) {
-            webConfiguration.mediaTypesRequiringUserActionForPlayback = []
+
+            configuration.mediaTypesRequiringUserActionForPlayback = []
         }
 
 
-        // IMPORTANT:
-        // Use the persistent default website data store.
+        // ---------------------------------------------------------
+        // File URL access
         //
-        // This allows WKWebView cookies/session data to persist
-        // between launches, which is important for login sessions.
+        // Kept to match the Android WebView configuration.
+        // ---------------------------------------------------------
 
-        webConfiguration.websiteDataStore = WKWebsiteDataStore.default()
-
-
-        // Create WebView
-
-        webView = WKWebView(
-            frame: .zero,
-            configuration: webConfiguration
+        configuration.setValue(
+            true,
+            forKey: "allowUniversalAccessFromFileURLs"
         )
+
+
+        // ---------------------------------------------------------
+        // Create WebView
+        // ---------------------------------------------------------
+
+        webView =
+            WKWebView(
+                frame: .zero,
+                configuration: configuration
+            )
 
         webView.translatesAutoresizingMaskIntoConstraints = false
 
@@ -250,19 +358,34 @@ final class ViewController: UIViewController,
         webView.backgroundColor = .white
         webView.isOpaque = true
 
-        // Add WebView below splash
 
-        view.insertSubview(webView, at: 0)
+        // WebView goes below splash.
+
+        view.insertSubview(
+            webView,
+            at: 0
+        )
+
 
         NSLayoutConstraint.activate([
-            webView.leadingAnchor.constraint(equalTo: view.leadingAnchor),
-            webView.trailingAnchor.constraint(equalTo: view.trailingAnchor),
-            webView.topAnchor.constraint(equalTo: view.topAnchor),
-            webView.bottomAnchor.constraint(equalTo: view.bottomAnchor)
+
+            webView.leadingAnchor.constraint(
+                equalTo: view.leadingAnchor
+            ),
+
+            webView.trailingAnchor.constraint(
+                equalTo: view.trailingAnchor
+            ),
+
+            webView.topAnchor.constraint(
+                equalTo: view.topAnchor
+            ),
+
+            webView.bottomAnchor.constraint(
+                equalTo: view.bottomAnchor
+            )
         ])
 
-
-        // Load website
 
         loadWebsite()
     }
@@ -272,23 +395,72 @@ final class ViewController: UIViewController,
 
     private func loadWebsite() {
 
-        guard let url = URL(string: websiteURL) else {
+        guard let url =
+            URL(string: websiteURL)
+        else {
+
             print("❌ Invalid website URL")
+
             return
         }
 
-        print("🌐 Loading: \(url.absoluteString)")
 
-        var request = URLRequest(url: url)
+        print("🌐 Loading:")
+        print(url.absoluteString)
 
-        request.cachePolicy = .useProtocolCachePolicy
+
+        var request =
+            URLRequest(
+                url: url
+            )
+
+        request.cachePolicy =
+            .useProtocolCachePolicy
+
         request.timeoutInterval = 60
 
-        webView.load(request)
+
+        webView.load(
+            request
+        )
     }
 
 
-    // MARK: - URL Routing
+    // MARK: - Back Navigation
+
+    private func setupBackNavigation() {
+
+        let backGesture =
+            UIScreenEdgePanGestureRecognizer(
+                target: self,
+                action: #selector(handleBackGesture(_:))
+            )
+
+        backGesture.edges = .left
+
+        view.addGestureRecognizer(
+            backGesture
+        )
+    }
+
+
+    @objc private func handleBackGesture(
+        _ gesture: UIScreenEdgePanGestureRecognizer
+    ) {
+
+        guard gesture.state == .ended else {
+            return
+        }
+
+
+        if webView.canGoBack {
+
+            webView.goBack()
+        }
+    }
+
+
+    // MARK: - Navigation Action
 
     func webView(
         _ webView: WKWebView,
@@ -296,27 +468,37 @@ final class ViewController: UIViewController,
         decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
     ) {
 
-        guard let url = navigationAction.request.url else {
+        guard let url =
+            navigationAction.request.url
+        else {
+
             decisionHandler(.allow)
+
             return
         }
 
-        let urlString = url.absoluteString
-        let scheme = url.scheme?.lowercased() ?? ""
 
-        print("➡️ Navigation request:")
-        print("   \(urlString)")
+        print("")
+        print("➡️ NAVIGATION REQUEST")
+        print("URL: \(url.absoluteString)")
+        print("Scheme: \(url.scheme ?? "nil")")
+        print("Host: \(url.host ?? "nil")")
+        print("Navigation type: \(navigationAction.navigationType.rawValue)")
+        print("")
 
 
         // ---------------------------------------------------------
         // tel:
         // ---------------------------------------------------------
 
-        if scheme == "tel" {
+        if url.scheme?.lowercased() == "tel" {
 
-            openExternalURL(url)
+            openExternalURL(
+                url
+            )
 
             decisionHandler(.cancel)
+
             return
         }
 
@@ -325,83 +507,254 @@ final class ViewController: UIViewController,
         // mailto:
         // ---------------------------------------------------------
 
-        if scheme == "mailto" {
+        if url.scheme?.lowercased() == "mailto" {
 
-            openExternalURL(url)
+            openExternalURL(
+                url
+            )
 
             decisionHandler(.cancel)
+
             return
         }
 
 
         // ---------------------------------------------------------
-        // SMS
+        // sms:
         // ---------------------------------------------------------
 
-        if scheme == "sms" {
+        if url.scheme?.lowercased() == "sms" {
 
-            openExternalURL(url)
+            openExternalURL(
+                url
+            )
 
             decisionHandler(.cancel)
+
             return
         }
 
 
         // ---------------------------------------------------------
-        // Maps
+        // Google Maps
         // ---------------------------------------------------------
 
-        if isGoogleMapsUrl(url: url) {
+        if isGoogleMapsURL(
+            url
+        ) {
 
-            openExternalURL(url)
+            print("🗺️ Google Maps detected")
+
+            openGoogleMaps(
+                url
+            )
 
             decisionHandler(.cancel)
+
             return
         }
 
 
         // ---------------------------------------------------------
-        // Social / external application URLs
+        // WhatsApp
         // ---------------------------------------------------------
 
-        if isSocialOrAppUrl(urlString: urlString) {
+        if isWhatsAppURL(
+            url
+        ) {
 
-            openExternalURL(url)
+            print("💬 WhatsApp detected")
+
+            openWhatsApp(
+                url
+            )
 
             decisionHandler(.cancel)
+
             return
         }
 
 
         // ---------------------------------------------------------
-        // HTTP / HTTPS
+        // Instagram
+        // ---------------------------------------------------------
+
+        if isInstagramURL(
+            url
+        ) {
+
+            print("📸 Instagram detected")
+
+            openInstagram(
+                url
+            )
+
+            decisionHandler(.cancel)
+
+            return
+        }
+
+
+        // ---------------------------------------------------------
+        // Facebook
+        // ---------------------------------------------------------
+
+        if isFacebookURL(
+            url
+        ) {
+
+            print("📘 Facebook detected")
+
+            openFacebook(
+                url
+            )
+
+            decisionHandler(.cancel)
+
+            return
+        }
+
+
+        // ---------------------------------------------------------
+        // X / Twitter
+        // ---------------------------------------------------------
+
+        if isTwitterURL(
+            url
+        ) {
+
+            print("𝕏 X/Twitter detected")
+
+            openTwitter(
+                url
+            )
+
+            decisionHandler(.cancel)
+
+            return
+        }
+
+
+        // ---------------------------------------------------------
+        // LinkedIn
+        // ---------------------------------------------------------
+
+        if isLinkedInURL(
+            url
+        ) {
+
+            print("💼 LinkedIn detected")
+
+            openLinkedIn(
+                url
+            )
+
+            decisionHandler(.cancel)
+
+            return
+        }
+
+
+        // ---------------------------------------------------------
+        // Spotify
+        // ---------------------------------------------------------
+
+        if isSpotifyURL(
+            url
+        ) {
+
+            print("🎵 Spotify detected")
+
+            openSpotify(
+                url
+            )
+
+            decisionHandler(.cancel)
+
+            return
+        }
+
+
+        // ---------------------------------------------------------
+        // Telegram
+        // ---------------------------------------------------------
+
+        if isTelegramURL(
+            url
+        ) {
+
+            print("✈️ Telegram detected")
+
+            openTelegram(
+                url
+            )
+
+            decisionHandler(.cancel)
+
+            return
+        }
+
+
+        // ---------------------------------------------------------
+        // Pinterest
+        // ---------------------------------------------------------
+
+        if isPinterestURL(
+            url
+        ) {
+
+            print("📌 Pinterest detected")
+
+            openPinterest(
+                url
+            )
+
+            decisionHandler(.cancel)
+
+            return
+        }
+
+
+        // ---------------------------------------------------------
+        // NORMAL HTTP / HTTPS
         //
         // IMPORTANT:
         //
-        // Keep normal HTTP/HTTPS navigation INSIDE the WebView.
+        // Login redirects, dashboard navigation, posts, API pages,
+        // authentication callbacks, etc. stay INSIDE WKWebView.
         //
-        // This is important for login redirects, authentication
-        // callbacks, internal website routing, etc.
+        // This is the behavior we want from the working Android app.
         // ---------------------------------------------------------
 
-        if scheme == "http" || scheme == "https" {
+        if let scheme =
+            url.scheme?.lowercased(),
+           scheme == "http" ||
+           scheme == "https" {
 
             decisionHandler(.allow)
+
             return
         }
 
 
         // ---------------------------------------------------------
-        // Unknown custom schemes
+        // Unknown custom URL scheme
         // ---------------------------------------------------------
 
-        if !scheme.isEmpty {
+        if let scheme =
+            url.scheme?.lowercased(),
+           !scheme.isEmpty {
 
-            if UIApplication.shared.canOpenURL(url) {
+            if UIApplication.shared.canOpenURL(
+                url
+            ) {
 
-                openExternalURL(url)
+                openExternalURL(
+                    url
+                )
 
                 decisionHandler(.cancel)
+
                 return
             }
         }
@@ -411,7 +764,7 @@ final class ViewController: UIViewController,
     }
 
 
-    // MARK: - Handle target="_blank"
+    // MARK: - target="_blank"
 
     func webView(
         _ webView: WKWebView,
@@ -420,18 +773,99 @@ final class ViewController: UIViewController,
         windowFeatures: WKWindowFeatures
     ) -> WKWebView? {
 
-        guard let url = navigationAction.request.url else {
+        guard let url =
+            navigationAction.request.url
+        else {
             return nil
         }
 
-        print("🔗 New-window request:")
-        print("   \(url.absoluteString)")
+
+        print("🔗 NEW WINDOW:")
+        print(url.absoluteString)
 
 
-        // If the website uses target="_blank", load it in the
-        // existing WebView instead of creating a blank WebView.
+        // Handle external application links.
 
-        webView.load(URLRequest(url: url))
+        if isGoogleMapsURL(url) {
+
+            openGoogleMaps(url)
+
+            return nil
+        }
+
+
+        if isWhatsAppURL(url) {
+
+            openWhatsApp(url)
+
+            return nil
+        }
+
+
+        if isInstagramURL(url) {
+
+            openInstagram(url)
+
+            return nil
+        }
+
+
+        if isFacebookURL(url) {
+
+            openFacebook(url)
+
+            return nil
+        }
+
+
+        if isTwitterURL(url) {
+
+            openTwitter(url)
+
+            return nil
+        }
+
+
+        if isLinkedInURL(url) {
+
+            openLinkedIn(url)
+
+            return nil
+        }
+
+
+        if isSpotifyURL(url) {
+
+            openSpotify(url)
+
+            return nil
+        }
+
+
+        if isTelegramURL(url) {
+
+            openTelegram(url)
+
+            return nil
+        }
+
+
+        if isPinterestURL(url) {
+
+            openPinterest(url)
+
+            return nil
+        }
+
+
+        // Everything else opens in the existing WebView.
+
+        webView.load(
+            URLRequest(
+                url: url
+            )
+        )
+
 
         return nil
     }
@@ -444,10 +878,11 @@ final class ViewController: UIViewController,
         didStartProvisionalNavigation navigation: WKNavigation!
     ) {
 
-        print("🌐 WebView started loading:")
-        print("   \(webView.url?.absoluteString ?? "unknown")")
-
-        pageLoaded = false
+        print("🌐 Navigation STARTED:")
+        print(
+            webView.url?.absoluteString
+            ?? "unknown"
+        )
     }
 
 
@@ -458,35 +893,60 @@ final class ViewController: UIViewController,
         didFinish navigation: WKNavigation!
     ) {
 
-        print("✅ WebView finished loading:")
-        print("   \(webView.url?.absoluteString ?? "unknown")")
+        print("✅ Navigation FINISHED:")
+        print(
+            webView.url?.absoluteString
+            ?? "unknown"
+        )
+
 
         pageLoaded = true
+
 
         maybeHideSplash()
 
 
-        // Give the page a moment to finish initializing its
-        // JavaScript objects before injecting our overrides.
+        // Login/session diagnostics.
 
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+        debugAuthenticationState()
+
+
+        // Share bridge.
+
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + 0.5
+        ) { [weak self] in
+
             self?.injectShareOverrides()
         }
 
 
-        // Debug authentication cookies
+        // Cookie diagnostics.
 
-        webView.configuration.websiteDataStore.httpCookieStore.getAllCookies {
-            cookies in
+        webView.configuration
+            .websiteDataStore
+            .httpCookieStore
+            .getAllCookies { cookies in
 
-            print("🍪 WebView cookies: \(cookies.count)")
+                print("")
+                print("🍪 WEBVIEW COOKIES: \(cookies.count)")
 
-            for cookie in cookies {
-                print(
-                    "   \(cookie.name) | \(cookie.domain) | secure=\(cookie.isSecure)"
-                )
+                for cookie in cookies {
+
+                    print(
+                        "COOKIE:",
+                        cookie.name,
+                        "| domain:",
+                        cookie.domain,
+                        "| path:",
+                        cookie.path,
+                        "| secure:",
+                        cookie.isSecure
+                    )
+                }
+
+                print("")
             }
-        }
     }
 
 
@@ -498,13 +958,19 @@ final class ViewController: UIViewController,
         withError error: Error
     ) {
 
-        print("❌ WebView navigation failed:")
-        print("   URL: \(webView.url?.absoluteString ?? "unknown")")
-        print("   Error: \(error.localizedDescription)")
+        print("❌ Navigation failed:")
+        print(
+            webView.url?.absoluteString
+            ?? "unknown"
+        )
+
+        print(
+            error.localizedDescription
+        )
     }
 
 
-    // MARK: - Initial Navigation Failed
+    // MARK: - Provisional Navigation Failed
 
     func webView(
         _ webView: WKWebView,
@@ -512,13 +978,20 @@ final class ViewController: UIViewController,
         withError error: Error
     ) {
 
-        print("❌ WebView provisional navigation failed:")
-        print("   URL: \(webView.url?.absoluteString ?? "unknown")")
-        print("   Error: \(error.localizedDescription)")
+        print("❌ Provisional navigation failed:")
+
+        print(
+            webView.url?.absoluteString
+            ?? "unknown"
+        )
+
+        print(
+            error.localizedDescription
+        )
     }
 
 
-    // MARK: - Response Debugging
+    // MARK: - Response
 
     func webView(
         _ webView: WKWebView,
@@ -526,92 +999,790 @@ final class ViewController: UIViewController,
         decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void
     ) {
 
-        let url = navigationResponse.response.url?.absoluteString ?? "unknown"
+        let url =
+            navigationResponse.response.url?.absoluteString
+            ?? "unknown"
 
-        print("🌐 Response:")
-        print("   URL: \(url)")
+
+        print("🌐 RESPONSE:")
+        print(url)
 
 
-        if let httpResponse =
+        if let response =
             navigationResponse.response as? HTTPURLResponse {
 
-            print("   HTTP status: \(httpResponse.statusCode)")
+            print(
+                "HTTP STATUS:",
+                response.statusCode
+            )
         }
+
 
         decisionHandler(.allow)
     }
 
 
-    // MARK: - External URL
+    // MARK: - Authentication Diagnostics
 
-    private func openExternalURL(_ url: URL) {
+    private func debugAuthenticationState() {
 
-        guard UIApplication.shared.canOpenURL(url) else {
-            print("⚠️ Cannot open URL:")
-            print("   \(url.absoluteString)")
+        let js = """
+        (function() {
+
+            var local = {};
+
+            try {
+                for (var i = 0; i < localStorage.length; i++) {
+                    var key = localStorage.key(i);
+
+                    if (key) {
+                        local[key] = localStorage.getItem(key);
+                    }
+                }
+            } catch (e) {}
+
+            var session = {};
+
+            try {
+                for (var j = 0; j < sessionStorage.length; j++) {
+                    var sessionKey = sessionStorage.key(j);
+
+                    if (sessionKey) {
+                        session[sessionKey] =
+                            sessionStorage.getItem(sessionKey);
+                    }
+                }
+            } catch (e) {}
+
+            return JSON.stringify({
+                url: window.location.href,
+                localStorageKeys: Object.keys(local),
+                sessionStorageKeys: Object.keys(session),
+                localStorage: local,
+                sessionStorage: session
+            });
+
+        })();
+        """
+
+
+        webView.evaluateJavaScript(
+            js
+        ) { result, error in
+
+            if let error = error {
+
+                print(
+                    "⚠️ Storage diagnostic error:"
+                )
+
+                print(
+                    error.localizedDescription
+                )
+
+                return
+            }
+
+
+            print("")
+            print("💾 WEB STORAGE:")
+            print(result ?? "nil")
+            print("")
+        }
+    }
+
+
+    // MARK: - External App Helper
+
+    private func openApp(
+        appURL: URL,
+        fallbackURL: URL
+    ) {
+
+        print("📱 Native URL:")
+        print(appURL.absoluteString)
+
+
+        if UIApplication.shared.canOpenURL(
+            appURL
+        ) {
+
+            UIApplication.shared.open(
+                appURL,
+                options: [:]
+            ) { success in
+
+                print(
+                    success
+                    ? "✅ Native app opened"
+                    : "❌ Native app failed to open"
+                )
+            }
+
+        } else {
+
+            print("⚠️ Native app not installed")
+            print("🌐 Opening browser:")
+            print(fallbackURL.absoluteString)
+
+
+            UIApplication.shared.open(
+                fallbackURL,
+                options: [:]
+            )
+        }
+    }
+
+
+    // MARK: - Generic External URL
+
+    private func openExternalURL(
+        _ url: URL
+    ) {
+
+        guard UIApplication.shared.canOpenURL(
+            url
+        ) else {
+
+            print(
+                "⚠️ Cannot open:",
+                url.absoluteString
+            )
+
             return
         }
 
+
         UIApplication.shared.open(
             url,
-            options: [:],
-            completionHandler: { success in
-
-                if success {
-                    print("✅ Opened externally:")
-                    print("   \(url.absoluteString)")
-                } else {
-                    print("❌ Failed to open externally:")
-                    print("   \(url.absoluteString)")
-                }
-            }
+            options: [:]
         )
     }
 
 
-    // MARK: - Google Maps Detection
+    // MARK: - Google Maps
 
-    private func isGoogleMapsUrl(url: URL) -> Bool {
+    private func isGoogleMapsURL(
+        _ url: URL
+    ) -> Bool {
 
-        guard let host = url.host?.lowercased() else {
+        guard let host =
+            url.host?.lowercased()
+        else {
             return false
         }
 
-        let path = url.path.lowercased()
 
-        return host == "maps.google.com" ||
-               host == "maps.app.goo.gl" ||
-               host == "www.google.com" && path.hasPrefix("/maps") ||
-               host.hasSuffix("google.com") && path.hasPrefix("/maps")
-    }
+        let path =
+            url.path.lowercased()
 
 
-    // MARK: - Social / App URL Detection
-
-    private func isSocialOrAppUrl(urlString: String) -> Bool {
-
-        let lowercasedURL = urlString.lowercased()
-
-        let targets = [
-            "whatsapp.com",
-            "pinterest.com",
-            "facebook.com",
-            "twitter.com",
-            "x.com",
-            "instagram.com",
-            "linkedin.com",
-            "open.spotify.com",
-            "telegram.me",
-            "t.me"
-        ]
-
-        return targets.contains {
-            lowercasedURL.contains($0)
+        if host == "maps.google.com" {
+            return true
         }
+
+
+        if host == "maps.app.goo.gl" {
+            return true
+        }
+
+
+        if host == "goo.gl" &&
+            path.hasPrefix("/maps") {
+
+            return true
+        }
+
+
+        if host.hasPrefix("maps.google.") {
+            return true
+        }
+
+
+        if host.hasPrefix("www.google.") &&
+            path.hasPrefix("/maps") {
+
+            return true
+        }
+
+
+        if host.hasPrefix("google.") &&
+            path.hasPrefix("/maps") {
+
+            return true
+        }
+
+
+        return false
     }
 
 
-    // MARK: - JavaScript Share Overrides
+    private func openGoogleMaps(
+        _ url: URL
+    ) {
+
+        let original =
+            url.absoluteString
+
+
+        guard let nativeURL =
+            URL(
+                string:
+                    "comgooglemapsurl://" +
+                    original
+                        .replacingOccurrences(
+                            of: "https://",
+                            with: ""
+                        )
+                        .replacingOccurrences(
+                            of: "http://",
+                            with: ""
+                        )
+            )
+        else {
+
+            openExternalURL(url)
+
+            return
+        }
+
+
+        openApp(
+            appURL: nativeURL,
+            fallbackURL: url
+        )
+    }
+
+
+    // MARK: - WhatsApp
+
+    private func isWhatsAppURL(
+        _ url: URL
+    ) -> Bool {
+
+        guard let host =
+            url.host?.lowercased()
+        else {
+            return false
+        }
+
+
+        return host == "wa.me" ||
+               host == "api.whatsapp.com" ||
+               host == "web.whatsapp.com" ||
+               host == "whatsapp.com" ||
+               host.hasSuffix(".whatsapp.com")
+    }
+
+
+    private func openWhatsApp(
+        _ url: URL
+    ) {
+
+        guard var components =
+            URLComponents(
+                url: url,
+                resolvingAgainstBaseURL: false
+            )
+        else {
+
+            openExternalURL(url)
+
+            return
+        }
+
+
+        let phone =
+            components.queryItems?
+                .first(
+                    where: {
+                        $0.name.lowercased() == "phone"
+                    }
+                )?
+                .value
+
+
+        let text =
+            components.queryItems?
+                .first(
+                    where: {
+                        $0.name.lowercased() == "text"
+                    }
+                )?
+                .value
+
+
+        if phone == nil,
+           url.host?.lowercased() == "wa.me" {
+
+            let path =
+                url.path
+                    .trimmingCharacters(
+                        in: CharacterSet(
+                            charactersIn: "/"
+                        )
+                    )
+
+            if !path.isEmpty {
+
+                components.queryItems =
+                    [
+                        URLQueryItem(
+                            name: "phone",
+                            value: path
+                        )
+                    ]
+            }
+        }
+
+
+        var queryItems =
+            components.queryItems ?? []
+
+
+        if let text = text {
+
+            queryItems.removeAll {
+                $0.name.lowercased() == "text"
+            }
+
+            queryItems.append(
+                URLQueryItem(
+                    name: "text",
+                    value: text
+                )
+            )
+        }
+
+
+        components.queryItems =
+            queryItems
+
+
+        var nativeURL =
+            URLComponents()
+
+        nativeURL.scheme = "whatsapp"
+        nativeURL.host = "send"
+        nativeURL.queryItems =
+            components.queryItems
+
+
+        guard let appURL =
+            nativeURL.url
+        else {
+
+            openExternalURL(url)
+
+            return
+        }
+
+
+        openApp(
+            appURL: appURL,
+            fallbackURL: url
+        )
+    }
+
+
+    // MARK: - Instagram
+
+    private func isInstagramURL(
+        _ url: URL
+    ) -> Bool {
+
+        guard let host =
+            url.host?.lowercased()
+        else {
+            return false
+        }
+
+
+        return host == "instagram.com" ||
+               host == "www.instagram.com"
+    }
+
+
+    private func openInstagram(
+        _ url: URL
+    ) {
+
+        let path =
+            url.path
+
+
+        let nativeURL =
+            URL(
+                string:
+                    "instagram://app" +
+                    path
+            )
+            ??
+            URL(
+                string:
+                    "instagram://app"
+            )
+
+
+        guard let appURL =
+            nativeURL
+        else {
+
+            openExternalURL(url)
+
+            return
+        }
+
+
+        openApp(
+            appURL: appURL,
+            fallbackURL: url
+        )
+    }
+
+
+    // MARK: - Facebook
+
+    private func isFacebookURL(
+        _ url: URL
+    ) -> Bool {
+
+        guard let host =
+            url.host?.lowercased()
+        else {
+            return false
+        }
+
+
+        return host == "facebook.com" ||
+               host == "www.facebook.com" ||
+               host.hasSuffix(".facebook.com")
+    }
+
+
+    private func openFacebook(
+        _ url: URL
+    ) {
+
+        let encoded =
+            url.absoluteString
+                .addingPercentEncoding(
+                    withAllowedCharacters:
+                        .urlQueryAllowed
+                )
+                ?? url.absoluteString
+
+
+        guard let appURL =
+            URL(
+                string:
+                    "fb://facewebmodal/f?href=\(encoded)"
+            )
+        else {
+
+            openExternalURL(url)
+
+            return
+        }
+
+
+        openApp(
+            appURL: appURL,
+            fallbackURL: url
+        )
+    }
+
+
+    // MARK: - X / Twitter
+
+    private func isTwitterURL(
+        _ url: URL
+    ) -> Bool {
+
+        guard let host =
+            url.host?.lowercased()
+        else {
+            return false
+        }
+
+
+        return host == "twitter.com" ||
+               host == "www.twitter.com" ||
+               host == "x.com" ||
+               host == "www.x.com"
+    }
+
+
+    private func openTwitter(
+        _ url: URL
+    ) {
+
+        if let xURL =
+            URL(
+                string:
+                    "x://"
+            ),
+           UIApplication.shared.canOpenURL(
+                xURL
+           ) {
+
+            UIApplication.shared.open(
+                xURL,
+                options: [:]
+            )
+
+            return
+        }
+
+
+        if let twitterURL =
+            URL(
+                string:
+                    "twitter://"
+            ),
+           UIApplication.shared.canOpenURL(
+                twitterURL
+           ) {
+
+            UIApplication.shared.open(
+                twitterURL,
+                options: [:]
+            )
+
+            return
+        }
+
+
+        openExternalURL(url)
+    }
+
+
+    // MARK: - LinkedIn
+
+    private func isLinkedInURL(
+        _ url: URL
+    ) -> Bool {
+
+        guard let host =
+            url.host?.lowercased()
+        else {
+            return false
+        }
+
+
+        return host == "linkedin.com" ||
+               host == "www.linkedin.com" ||
+               host.hasSuffix(".linkedin.com")
+    }
+
+
+    private func openLinkedIn(
+        _ url: URL
+    ) {
+
+        guard let appURL =
+            URL(
+                string:
+                    "linkedin://"
+            )
+        else {
+
+            openExternalURL(url)
+
+            return
+        }
+
+
+        openApp(
+            appURL: appURL,
+            fallbackURL: url
+        )
+    }
+
+
+    // MARK: - Spotify
+
+    private func isSpotifyURL(
+        _ url: URL
+    ) -> Bool {
+
+        guard let host =
+            url.host?.lowercased()
+        else {
+            return false
+        }
+
+
+        return host == "open.spotify.com" ||
+               host == "spotify.com" ||
+               host == "www.spotify.com"
+    }
+
+
+    private func openSpotify(
+        _ url: URL
+    ) {
+
+        var nativeString =
+            "spotify:" +
+            url.path
+
+
+        if let query =
+            url.query,
+           !query.isEmpty {
+
+            nativeString += "?" + query
+        }
+
+
+        guard let appURL =
+            URL(
+                string:
+                    nativeString
+            )
+        else {
+
+            openExternalURL(url)
+
+            return
+        }
+
+
+        openApp(
+            appURL: appURL,
+            fallbackURL: url
+        )
+    }
+
+
+    // MARK: - Telegram
+
+    private func isTelegramURL(
+        _ url: URL
+    ) -> Bool {
+
+        guard let host =
+            url.host?.lowercased()
+        else {
+            return false
+        }
+
+
+        return host == "t.me" ||
+               host == "telegram.me" ||
+               host == "telegram.dog"
+    }
+
+
+    private func openTelegram(
+        _ url: URL
+    ) {
+
+        let path =
+            url.path
+                .trimmingCharacters(
+                    in: CharacterSet(
+                        charactersIn: "/"
+                    )
+                )
+
+
+        if !path.isEmpty {
+
+            let encoded =
+                path.addingPercentEncoding(
+                    withAllowedCharacters:
+                        .urlPathAllowed
+                )
+                ?? path
+
+
+            if let appURL =
+                URL(
+                    string:
+                        "tg://resolve?domain=\(encoded)"
+                ) {
+
+                if UIApplication.shared.canOpenURL(
+                    appURL
+                ) {
+
+                    UIApplication.shared.open(
+                        appURL,
+                        options: [:]
+                    )
+
+                    return
+                }
+            }
+        }
+
+
+        guard let appURL =
+            URL(
+                string:
+                    "tg://"
+            )
+        else {
+
+            openExternalURL(url)
+
+            return
+        }
+
+
+        openApp(
+            appURL: appURL,
+            fallbackURL: url
+        )
+    }
+
+
+    // MARK: - Pinterest
+
+    private func isPinterestURL(
+        _ url: URL
+    ) -> Bool {
+
+        guard let host =
+            url.host?.lowercased()
+        else {
+            return false
+        }
+
+
+        return host == "pinterest.com" ||
+               host == "www.pinterest.com" ||
+               host == "pin.it"
+    }
+
+
+    private func openPinterest(
+        _ url: URL
+    ) {
+
+        guard let appURL =
+            URL(
+                string:
+                    "pinterest://"
+            )
+        else {
+
+            openExternalURL(url)
+
+            return
+        }
+
+
+        openApp(
+            appURL: appURL,
+            fallbackURL: url
+        )
+    }
+
+
+    // MARK: - Share JavaScript
 
     private func injectShareOverrides() {
 
@@ -637,6 +1808,7 @@ final class ViewController: UIViewController,
                     return window.location.href;
                 }
 
+
                 return window.location.origin +
                        '/index.php?link1=post&id=' +
                        postId;
@@ -652,14 +1824,20 @@ final class ViewController: UIViewController,
                     var postElem =
                         document.querySelector('[data-post-id]');
 
+
                     if (postElem) {
+
                         postId =
-                            postElem.getAttribute('data-post-id');
+                            postElem.getAttribute(
+                                'data-post-id'
+                            );
                     }
+
 
                     window.webkit.messageHandlers.shareText.postMessage(
                         getPostUrlFromId(postId)
                     );
+
 
                     return false;
                 };
@@ -678,9 +1856,11 @@ final class ViewController: UIViewController,
                 'click',
                 function(e) {
 
-                    var target = e.target.closest(
-                        '.stat-item, .btn, [onclick*="Share"], [title*="share"]'
-                    );
+                    var target =
+                        e.target.closest(
+                            '.stat-item, .btn, [onclick*="Share"], [title*="share"]'
+                        );
+
 
                     if (!target) {
                         return;
@@ -696,6 +1876,7 @@ final class ViewController: UIViewController,
                             .toLowerCase()
                             .includes('share')
                     ) {
+
                         isShareBtn = true;
                     }
 
@@ -706,6 +1887,7 @@ final class ViewController: UIViewController,
                             .toLowerCase()
                             .includes('share')
                     ) {
+
                         isShareBtn = true;
                     }
 
@@ -716,6 +1898,7 @@ final class ViewController: UIViewController,
                             .toString()
                             .includes('Share')
                     ) {
+
                         isShareBtn = true;
                     }
 
@@ -731,11 +1914,16 @@ final class ViewController: UIViewController,
 
 
                     var postContainer =
-                        target.closest('[data-post-id]');
+                        target.closest(
+                            '[data-post-id]'
+                        );
+
 
                     var postId =
                         postContainer
-                            ? postContainer.getAttribute('data-post-id')
+                            ? postContainer.getAttribute(
+                                'data-post-id'
+                              )
                             : null;
 
 
@@ -747,22 +1935,36 @@ final class ViewController: UIViewController,
                 true
             );
 
-        })()
+
+        })();
         """
 
-        webView.evaluateJavaScript(js) { result, error in
+
+        webView.evaluateJavaScript(
+            js
+        ) { _, error in
 
             if let error = error {
-                print("⚠️ Share JS injection error:")
-                print(error.localizedDescription)
+
+                print(
+                    "⚠️ Share JS injection error:"
+                )
+
+                print(
+                    error.localizedDescription
+                )
+
             } else {
-                print("✅ Share JS injected")
+
+                print(
+                    "✅ Share interceptor installed"
+                )
             }
         }
     }
 
 
-    // MARK: - Send Event To JavaScript
+    // MARK: - TTS -> JavaScript
 
     private func sendToJs(
         event: String,
@@ -771,13 +1973,26 @@ final class ViewController: UIViewController,
 
         let escapedEvent =
             event
-                .replacingOccurrences(of: "\\", with: "\\\\")
-                .replacingOccurrences(of: "'", with: "\\'")
+                .replacingOccurrences(
+                    of: "\\",
+                    with: "\\\\"
+                )
+                .replacingOccurrences(
+                    of: "'",
+                    with: "\\'"
+                )
+
 
         let escapedMessageId =
             messageId
-                .replacingOccurrences(of: "\\", with: "\\\\")
-                .replacingOccurrences(of: "'", with: "\\'")
+                .replacingOccurrences(
+                    of: "\\",
+                    with: "\\\\"
+                )
+                .replacingOccurrences(
+                    of: "'",
+                    with: "\\'"
+                )
 
 
         let script = """
@@ -809,11 +2024,12 @@ final class ViewController: UIViewController,
         didStart utterance: AVSpeechUtterance
     ) {
 
-        if let msgId = currentMessageId {
+        if let messageId =
+            currentMessageId {
 
             sendToJs(
                 event: "onSpeechStart",
-                messageId: msgId
+                messageId: messageId
             )
         }
     }
@@ -824,13 +2040,15 @@ final class ViewController: UIViewController,
         didFinish utterance: AVSpeechUtterance
     ) {
 
-        if let msgId = currentMessageId {
+        if let messageId =
+            currentMessageId {
 
             sendToJs(
                 event: "onSpeechEnd",
-                messageId: msgId
+                messageId: messageId
             )
         }
+
 
         currentMessageId = nil
     }
@@ -841,13 +2059,15 @@ final class ViewController: UIViewController,
         didCancel utterance: AVSpeechUtterance
     ) {
 
-        if let msgId = currentMessageId {
+        if let messageId =
+            currentMessageId {
 
             sendToJs(
                 event: "onSpeechEnd",
-                messageId: msgId
+                messageId: messageId
             )
         }
+
 
         currentMessageId = nil
     }
@@ -856,15 +2076,16 @@ final class ViewController: UIViewController,
 
 // MARK: - WKScriptMessageHandler
 
-extension ViewController: WKScriptMessageHandler {
+extension ViewController {
 
     func userContentController(
         _ userContentController: WKUserContentController,
         didReceive message: WKScriptMessage
     ) {
 
-        guard let body = message.body as? String else {
-            print("⚠️ JS message body is not a String")
+        guard let body =
+            message.body as? String
+        else {
             return
         }
 
@@ -885,20 +2106,21 @@ extension ViewController: WKScriptMessageHandler {
                 )
 
 
-            if let popoverController =
+            if let popover =
                 activityVC.popoverPresentationController {
 
-                popoverController.sourceView = self.view
+                popover.sourceView =
+                    view
 
-                popoverController.sourceRect =
+                popover.sourceRect =
                     CGRect(
-                        x: self.view.bounds.midX,
-                        y: self.view.bounds.midY,
+                        x: view.bounds.midX,
+                        y: view.bounds.midY,
                         width: 0,
                         height: 0
                     )
 
-                popoverController.permittedArrowDirections = []
+                popover.permittedArrowDirections = []
             }
 
 
@@ -909,41 +2131,33 @@ extension ViewController: WKScriptMessageHandler {
 
 
         // ---------------------------------------------------------
-        // Authentication token
+        // Auth token
+        //
+        // Same behavior as Android:
+        // receive/log the token.
+        // We do NOT manually redirect here.
         // ---------------------------------------------------------
 
         case "getAuthToken":
 
-            print("🔑 Device Authorization Token received:")
+            print("")
+            print("🔑 DEVICE AUTH TOKEN RECEIVED")
             print(body)
-
-            // IMPORTANT:
-            //
-            // Your original code only printed this token.
-            //
-            // I have intentionally NOT invented token-storage or
-            // authentication logic here because the uploaded
-            // ViewController does not define what this token is
-            // supposed to contain or how the website expects it
-            // to be returned.
-            //
-            // If your website requires native authentication,
-            // this is the section that needs to be connected to
-            // the actual authentication flow.
+            print("")
 
 
         // ---------------------------------------------------------
-        // Text To Speech
+        // TTS
         // ---------------------------------------------------------
 
         case "speakText":
 
-            guard let synthesizer = speechSynthesizer else {
+            guard let synthesizer =
+                speechSynthesizer
+            else {
                 return
             }
 
-
-            // Stop current speech
 
             if synthesizer.isSpeaking {
 
@@ -952,13 +2166,15 @@ extension ViewController: WKScriptMessageHandler {
                 )
 
 
-                if let msgId = currentMessageId {
+                if let messageId =
+                    currentMessageId {
 
                     sendToJs(
                         event: "onSpeechEnd",
-                        messageId: msgId
+                        messageId: messageId
                     )
                 }
+
 
                 currentMessageId = nil
 
@@ -966,28 +2182,361 @@ extension ViewController: WKScriptMessageHandler {
             }
 
 
-            // Current implementation uses a local identifier.
-            // Keep this compatible with your existing web code.
-
-            currentMessageId = "ttsMessageId"
+            currentMessageId =
+                "ttsMessageId"
 
 
             let utterance =
-                AVSpeechUtterance(string: body)
+                AVSpeechUtterance(
+                    string: body
+                )
+
 
             utterance.voice =
                 AVSpeechSynthesisVoice(
                     language: "en-US"
                 )
 
-            synthesizer.speak(utterance)
+
+            synthesizer.speak(
+                utterance
+            )
 
 
         default:
 
-            print("⚠️ Unknown JS message:")
-            print(message.name)
+            print(
+                "⚠️ Unknown JavaScript message:",
+                message.name
+            )
         }
     }
 }
 
+
+// MARK: - WKUIDelegate
+// Camera / Microphone / File Upload
+
+extension ViewController {
+
+    @available(iOS 15.0, *)
+    func webView(
+        _ webView: WKWebView,
+        requestMediaCapturePermissionFor origin: WKSecurityOrigin,
+        initiatedByFrame frame: WKFrameInfo,
+        type: WKMediaCaptureType,
+        decisionHandler: @escaping (WKPermissionDecision) -> Void
+    ) {
+
+        print("")
+        print("🎤📷 MEDIA PERMISSION REQUEST")
+        print("Host:", origin.host)
+        print("Type:", type.rawValue)
+        print("")
+
+
+        switch type {
+
+        case .camera:
+
+            AVCaptureDevice.requestAccess(
+                for: .video
+            ) { granted in
+
+                DispatchQueue.main.async {
+
+                    decisionHandler(
+                        granted
+                        ? .grant
+                        : .deny
+                    )
+                }
+            }
+
+
+        case .microphone:
+
+            AVCaptureDevice.requestAccess(
+                for: .audio
+            ) { granted in
+
+                DispatchQueue.main.async {
+
+                    decisionHandler(
+                        granted
+                        ? .grant
+                        : .deny
+                    )
+                }
+            }
+
+
+        case .cameraAndMicrophone:
+
+            let group =
+                DispatchGroup()
+
+            var cameraGranted = false
+            var microphoneGranted = false
+
+
+            group.enter()
+
+            AVCaptureDevice.requestAccess(
+                for: .video
+            ) { granted in
+
+                cameraGranted = granted
+
+                group.leave()
+            }
+
+
+            group.enter()
+
+            AVCaptureDevice.requestAccess(
+                for: .audio
+            ) { granted in
+
+                microphoneGranted = granted
+
+                group.leave()
+            }
+
+
+            group.notify(
+                queue: .main
+            ) {
+
+                decisionHandler(
+                    cameraGranted &&
+                    microphoneGranted
+                    ? .grant
+                    : .deny
+                )
+            }
+
+
+        @unknown default:
+
+            decisionHandler(
+                .deny
+            )
+        }
+    }
+
+
+    @available(iOS 14.0, *)
+    func webView(
+        _ webView: WKWebView,
+        runOpenPanelWith parameters: WKOpenPanelParameters,
+        initiatedByFrame frame: WKFrameInfo,
+        completionHandler: @escaping ([URL]?) -> Void
+    ) {
+
+        print("📁 File upload requested")
+
+
+        fileUploadCompletion =
+            completionHandler
+
+
+        var configuration =
+            PHPickerConfiguration()
+
+        configuration.selectionLimit =
+            parameters.allowsMultipleSelection
+            ? 0
+            : 1
+
+        configuration.filter =
+            .any(of: [
+                .images,
+                .videos
+            ])
+
+
+        let picker =
+            PHPickerViewController(
+                configuration:
+                    configuration
+            )
+
+
+        picker.delegate = self
+
+
+        present(
+            picker,
+            animated: true
+        )
+    }
+}
+
+
+// MARK: - PHPicker Delegate
+
+extension ViewController: PHPickerViewControllerDelegate {
+
+    func picker(
+        _ picker: PHPickerViewController,
+        didFinishPicking results: [PHPickerResult]
+    ) {
+
+        picker.dismiss(
+            animated: true
+        )
+
+
+        guard !results.isEmpty else {
+
+            fileUploadCompletion?(
+                nil
+            )
+
+            fileUploadCompletion =
+                nil
+
+            return
+        }
+
+
+        let dispatchGroup =
+            DispatchGroup()
+
+        var urls: [URL] = []
+
+
+        for result in results {
+
+            let provider =
+                result.itemProvider
+
+
+            if provider.hasItemConformingToTypeIdentifier(
+                "public.image"
+            ) {
+
+                dispatchGroup.enter()
+
+
+                provider.loadFileRepresentation(
+                    forTypeIdentifier:
+                        "public.image"
+                ) { url, _ in
+
+                    defer {
+                        dispatchGroup.leave()
+                    }
+
+
+                    guard let url =
+                        url
+                    else {
+                        return
+                    }
+
+
+                    let temporaryURL =
+                        FileManager.default
+                            .temporaryDirectory
+                            .appendingPathComponent(
+                                UUID().uuidString
+                                + "-"
+                                + url.lastPathComponent
+                            )
+
+
+                    do {
+
+                        try FileManager.default.copyItem(
+                            at: url,
+                            to: temporaryURL
+                        )
+
+
+                        urls.append(
+                            temporaryURL
+                        )
+
+                    } catch {
+
+                        print(
+                            "❌ File copy failed:",
+                            error.localizedDescription
+                        )
+                    }
+                }
+
+
+            } else if provider.hasItemConformingToTypeIdentifier(
+                "public.movie"
+            ) {
+
+                dispatchGroup.enter()
+
+
+                provider.loadFileRepresentation(
+                    forTypeIdentifier:
+                        "public.movie"
+                ) { url, _ in
+
+                    defer {
+                        dispatchGroup.leave()
+                    }
+
+
+                    guard let url =
+                        url
+                    else {
+                        return
+                    }
+
+
+                    let temporaryURL =
+                        FileManager.default
+                            .temporaryDirectory
+                            .appendingPathComponent(
+                                UUID().uuidString
+                                + "-"
+                                + url.lastPathComponent
+                            )
+
+
+                    do {
+
+                        try FileManager.default.copyItem(
+                            at: url,
+                            to: temporaryURL
+                        )
+
+
+                        urls.append(
+                            temporaryURL
+                        )
+
+                    } catch {
+
+                        print(
+                            "❌ Video copy failed:",
+                            error.localizedDescription
+                        )
+                    }
+                }
+            }
+        }
+
+
+        dispatchGroup.notify(
+            queue: .main
+        ) {
+
+            self.fileUploadCompletion?(
+                urls
+            )
+
+            self.fileUploadCompletion =
+                nil
+        }
+    }
+}
