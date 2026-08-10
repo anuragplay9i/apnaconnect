@@ -98,6 +98,8 @@ final class ViewController: UIViewController,
 
 
     deinit {
+
+        webView?.configuration.userContentController.removeScriptMessageHandler(forName: "xhrCookieSync")
         webView?.configuration.userContentController.removeScriptMessageHandler(
             forName: "shareText"
         )
@@ -2159,6 +2161,20 @@ extension ViewController {
 
 
         switch message.name {
+
+
+        // ---------------------------------------------------------
+        // XHR Cookie Sync (NEW CASE FOR PHYSICAL IPHONE FIX)
+        // ---------------------------------------------------------
+
+        case "xhrCookieSync":
+
+            webView.configuration.websiteDataStore.httpCookieStore.getAllCookies { [weak self] cookies in
+                guard let self = self else { return }
+                for cookie in cookies {
+                    self.webView.configuration.websiteDataStore.httpCookieStore.setCookie(cookie)
+                }
+            }
 
 
         // ---------------------------------------------------------
