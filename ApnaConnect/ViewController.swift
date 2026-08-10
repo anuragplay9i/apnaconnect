@@ -266,8 +266,13 @@ final class ViewController: UIViewController,
 
     private func setupWebView() {
 
-        let configuration =
-            WKWebViewConfiguration()
+        let configuration = WKWebViewConfiguration()
+
+        // ---------------------------------------------------------
+        // Persistent Process Pool & Website Storage
+        // Ensures PHP PHPSESSID cookies persist across HTTP redirects
+        // ---------------------------------------------------------
+        configuration.processPool = WKProcessPool()
 
 
         // ---------------------------------------------------------
@@ -276,8 +281,7 @@ final class ViewController: UIViewController,
         // This is important for login/session cookies and storage.
         // ---------------------------------------------------------
 
-        configuration.websiteDataStore =
-            WKWebsiteDataStore.default()
+        configuration.websiteDataStore = WKWebsiteDataStore.default()
 
 
         // ---------------------------------------------------------
@@ -690,6 +694,7 @@ final class ViewController: UIViewController,
             return
         }
 
+        
 
         decisionHandler(.allow)
     }
@@ -926,22 +931,28 @@ final class ViewController: UIViewController,
         decisionHandler: @escaping (WKNavigationResponsePolicy) -> Void
     ) {
 
-        let url =
-            navigationResponse.response.url?.absoluteString
-            ?? "unknown"
-
-
+        let url = navigationResponse.response.url?.absoluteString ?? "unknown"
         print("🌐 RESPONSE:")
         print(url)
 
+        if let httpResponse = navigationResponse.response as? HTTPURLResponse {
+            print("HTTP STATUS:", httpResponse.statusCode)
 
-        if let response =
-            navigationResponse.response as? HTTPURLResponse {
-
-            print(
-                "HTTP STATUS:",
-                response.statusCode
-            )
+            // ---------------------------------------------------------
+            // PHP Cookie Sync Fix for Physical iOS Devices
+            // ---------------------------------------------------------
+            if let responseURL = httpResponse.url,
+            let headerFields = httpResponse.allHeaderFields as? [String: String] {
+                
+                let cookies = HTTPCookie.cookies(
+                    withResponseHeaderFields: headerFields,
+                    for: responseURL
+                )
+                
+                for cookie in cookies {
+                    webView.configuration.websiteDataStore.httpCookieStore.setCookie(cookie)
+                }
+            }
         }
 
 
